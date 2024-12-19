@@ -2,9 +2,10 @@ const std = @import("std");
 const zig = @import("builtin");
 
 pub fn build(b: *std.Build) !void {
+    const target = b.standardTargetOptions(.{});
     const cfg = std.Build.TestOptions{
         .name = "zig-sdl3",
-        .target = b.standardTargetOptions(.{}),
+        .target = target,
         .optimize = b.standardOptimizeOption(.{}),
         .root_source_file = b.path("src/sdl3.zig"),
         .version = .{
@@ -14,7 +15,7 @@ pub fn build(b: *std.Build) !void {
         },
     };
     _ = generateBindings(b, cfg);
-    const sdl3 = b.addModule("sdl3", .{ .root_source_file = cfg.root_source_file });
+    const sdl3 = b.addModule("sdl3", .{ .root_source_file = cfg.root_source_file, .target = target });
     const main_callbacks = b.option(bool, "callbacks", "Enable SDL callbacks rather than use a main function") orelse false;
     if (main_callbacks)
         sdl3.addCSourceFile(.{ .file = b.path("main_callbacks.c") });
@@ -25,12 +26,26 @@ pub fn build(b: *std.Build) !void {
     _ = setupTest(b, cfg, extension_options, ext_image);
     // _ = try setupExamples(b, sdl3, cfg);
     _ = try runExample(b, sdl3, cfg, ext_image);
+
+    if (b.option([]const u8, "sdl3_include_path", "Path to where root SDL3 include directory is located")) |p| sdl3.addSystemIncludePath(.{ .cwd_relative = p });
+    if (b.option([]const u8, "sdl3_image_include_path", "Path to includes where SDL3_image directory is located")) |p| sdl3.addSystemIncludePath(.{ .cwd_relative = p });
+    if (target.result.os.tag == .windows) {
+        // SDL3 must be either compiled by yourself or precompiled files downloaded & headers (include) dir extracted:
+        // https://github.com/libsdl-org/SDL/releases/tag/preview-3.1.6
+        // https://github.com/libsdl-org/SDL_image/releases/tag/preview-3.1.0
+        const sdl3_dll_path = b.option([]const u8, "sdl3_dll_path", "Path to directory where SDL3.dll is located");
+        if (sdl3_dll_path) |p| {
+            b.installBinFile(b.pathJoin(&.{ p, "SDL3.dll" }), "SDL3.dll");
+            sdl3.addObjectFile(.{ .cwd_relative = b.pathJoin(&.{ p, "SDL3.dll" }) });
+        }
+    } else {
+        sdl3.linkSystemLibrary("SDL3", .{ .needed = true });
+    }
 }
 
 pub fn linkTarget(b: *std.Build, target: *std.Build.Step.Compile, image: bool) void {
     // target.addSystemIncludePath(b.path("/usr/local/include"));
     _ = b;
-    target.linkSystemLibrary("SDL3");
     if (image)
         target.linkSystemLibrary("SDL3_image");
     target.linkSystemLibrary("m");
