@@ -70,6 +70,15 @@ pub fn main() !void {
     try surface.fillRect(null, surface.mapRgb(128, 30, 255));
     try window.updateSurface();
 
-    sdl3.timer.delayMilliseconds(5000);
+    main: while (true) {
+        while (sdl.events.poll()) |event| {
+            switch (event) {
+                .quit => break :main,
+                .terminating => break :main,
+
+                else => {}
+            }
+        }
+    }
 }
 ```
