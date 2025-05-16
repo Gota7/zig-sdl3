@@ -366,7 +366,7 @@ pub const Renderer = struct {
     /// Get the drawing area for the current target.
     pub fn getViewport(
         self: Renderer,
-    ) ?rect.Rect {
+    ) !rect.IRect {
         var viewport: C.SDL_Rect = undefined;
         const ret = C.SDL_GetRenderViewport(
             self.value,
@@ -374,7 +374,7 @@ pub const Renderer = struct {
         );
         if (!ret)
             return error.SdlError;
-        return rect.Rect.fromSdl(viewport);
+        return rect.IRect.fromSdl(viewport);
     }
 
     /// Return whether an explicit rectangle was set as the viewport.

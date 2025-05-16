@@ -6,6 +6,7 @@ const video = @import("video.zig");
 const keyboard = @import("keyboard.zig");
 const keycode = @import("keycode.zig");
 const scancode = @import("scancode.zig");
+const mouse = @import("mouse.zig");
 
 /// The type of action to request from `events.peep()`.
 ///
@@ -236,7 +237,8 @@ pub const Type = enum(C.SDL_EventType) {
     // WindowHidden,
     // WindowExposed,
     // WindowMoved,
-    // WindowResized,
+    /// Window has been resized
+    window_resized,
     // WindowPixelSizeChanged,
     // WindowMetalViewResized,
     // WindowMinimized,
@@ -267,10 +269,14 @@ pub const Type = enum(C.SDL_EventType) {
     // KeyboardAdded,
     // KeyboardRemoved,
     // TextEditingCandidates,
-    // MouseMotion,
-    // MouseButtonDown,
-    // MouseButtonUp,
-    // MouseWheel,
+    /// Mouse moved
+    mouse_motion,
+    /// Mouse button pressed
+    mouse_button_down,
+    /// Mouse button released
+    mouse_button_up,
+    /// Mouse wheel motion
+    mouse_wheel,
     // MouseAdded,
     // MouseRemoved,
     // JoystickAxisMotion,
@@ -395,6 +401,75 @@ pub const User = struct {
     data2: ?*anyopaque = null,
 };
 
+/// Mouse motion event structure (event.motion.*)
+///
+/// ## Version
+/// This struct is available since SDL 3.2.0.
+pub const MouseMotion = struct {
+    /// Common event information.
+    common: Common,
+    /// Associated window if any.
+    window_id: ?video.WindowID = null,
+    /// The mouse instance id in relative mode, .touch for touch events, or null
+    which: ?mouse.ID = null,
+    /// The current button state
+    state: mouse.ButtonFlags,
+    /// X coordinate, relative to window
+    x: f32,
+    /// Y coordinate, relative to window
+    y: f32,
+    /// The relative motion in the X direction
+    x_rel: f32,
+    /// The relative motion in the Y direction
+    y_rel: f32,
+};
+
+/// Mouse button event structure (event.button.*)
+///
+/// ## Version
+/// This struct is available since SDL 3.2.0.
+pub const MouseButton = struct {
+    /// Common event information.
+    common: Common,
+    /// Associated window if any.
+    window_id: ?video.WindowID = null,
+    /// The mouse instance id in relative mode, .touch for touch events, or null
+    which: ?mouse.ID = null,
+    /// The mouse button index
+    button: mouse.Button,
+    /// If the button is pressed
+    down: bool,
+    /// 1 for single-click, 2 for double-click, etc.
+    clicks: u8,
+    /// X coordinate, relative to window
+    x: f32,
+    /// Y coordinate, relative to window
+    y: f32,
+};
+
+/// Mouse wheel event structure (event.wheel.*)
+///
+/// ## Version
+/// This struct is available since SDL 3.2.0.
+pub const MouseWheel = struct {
+    /// Common event information.
+    common: Common,
+    /// Associated window if any.
+    window_id: ?video.WindowID = null,
+    /// The mouse instance id in relative mode, .touch for touch events, or null
+    which: ?mouse.ID = null,
+    /// The amount scrolled horizontally, positive to the right and negative to the left
+    scroll_x: f32,
+    /// The amount scrolled vertically, positive away from the user and negative toward the user
+    scroll_y: f32,
+    /// When .flipped, the values in X and Y will be opposite. Multiply by -1 to change them back
+    direction: mouse.WheelDirection,
+    /// X coordinate, relative to window
+    x: f32,
+    /// Y coordinate, relative to window
+    y: f32,
+};
+
 /// Keyboard button event structure (event.key.*)
 ///
 /// ## Remarks
@@ -439,6 +514,21 @@ pub const Key = struct {
     repeat: bool,
 };
 
+/// Window state change event data (event.window.*)
+///
+/// ## Version
+/// This struct is available since SDL 3.2.0.
+pub const Window = struct {
+    /// Common event information.
+    common: Common,
+    /// Associated window
+    window_id: video.WindowID,
+    /// Event dependent data 1.
+    data1: i32,
+    /// Event dependent data 2.
+    data2: i32,
+};
+
 /// The "quit requested" event.
 pub const Quit = struct {
     /// Common event information.
@@ -463,12 +553,27 @@ pub const Event = union(Type) {
     quit: Quit,
     /// Application being terminated by the OS.
     terminating: Common,
+
+    /// Window has been resized
+    window_resized: Window,
+
     /// A key pressed event.
     key_down: Key,
     /// A key released event.
     key_up: Key,
+
+    /// Mouse moved
+    mouse_motion: MouseMotion,
+    /// Mouse button pressed
+    mouse_button_down: MouseButton,
+    /// Mouse button released
+    mouse_button_up: MouseButton,
+    /// Mouse wheel motion
+    mouse_wheel: MouseWheel,
+
     /// A user event.
     user: User,
+
     /// An unknown event.
     unknown: Unknown,
     // Padding to make union the same size of a `C.SDL_Event`.
@@ -498,18 +603,16 @@ pub const Event = union(Type) {
                 .common = Common.fromSdl(&event),
             } },
             C.SDL_EVENT_TERMINATING => .{ .terminating = Common.fromSdl(&event) },
-            C.SDL_EVENT_USER...C.SDL_EVENT_LAST => .{ .user = .{
+            C.SDL_EVENT_WINDOW_RESIZED => .{ .window_resized = .{
                 .common = Common.fromSdl(&event),
-                .event_type = event.type,
-                .window_id = if (event.user.windowID == 0) null else event.user.windowID,
-                .code = event.user.code,
-                .data1 = event.user.data1,
-                .data2 = event.user.data2,
+                .window_id = event.window.windowID,
+                .data1 = event.window.data1,
+                .data2 = event.window.data2,
             } },
             C.SDL_EVENT_KEY_DOWN => .{
                 .key_down = .{
                     .common = Common.fromSdl(&event),
-                    .window_id = if (event.user.windowID == 0) null else event.key.windowID,
+                    .window_id = if (event.key.windowID == 0) null else event.key.windowID,
                     .which = .{
                         .value = event.key.which,
                     },
@@ -524,7 +627,7 @@ pub const Event = union(Type) {
             C.SDL_EVENT_KEY_UP => .{
                 .key_up = .{
                     .common = Common.fromSdl(&event),
-                    .window_id = if (event.user.windowID == 0) null else event.key.windowID,
+                    .window_id = if (event.key.windowID == 0) null else event.key.windowID,
                     .which = .{
                         .value = event.key.which,
                     },
@@ -536,6 +639,62 @@ pub const Event = union(Type) {
                     .repeat = event.key.repeat,
                 },
             },
+            C.SDL_EVENT_MOUSE_MOTION => .{ .mouse_motion = .{
+                .common = .fromSdl(&event),
+                .window_id = if (event.motion.windowID == 0) null else event.motion.windowID,
+                .which = .{
+                    .value = event.motion.which,
+                },
+                .state = .fromSdl(event.motion.state),
+                .x = event.motion.x,
+                .y = event.motion.y,
+                .x_rel = event.motion.xrel,
+                .y_rel = event.motion.yrel,
+            } },
+            C.SDL_EVENT_MOUSE_BUTTON_DOWN => .{ .mouse_button_down = .{
+                .common = .fromSdl(&event),
+                .window_id = if (event.button.windowID == 0) null else event.button.windowID,
+                .which = .{
+                    .value = event.button.which,
+                },
+                .button = @enumFromInt(event.button.button),
+                .down = event.button.down,
+                .clicks = event.button.clicks,
+                .x = event.button.x,
+                .y = event.button.y,
+            } },
+            C.SDL_EVENT_MOUSE_BUTTON_UP => .{ .mouse_button_up = .{
+                .common = .fromSdl(&event),
+                .window_id = if (event.button.windowID == 0) null else event.button.windowID,
+                .which = .{
+                    .value = event.button.which,
+                },
+                .button = @enumFromInt(event.button.button),
+                .down = event.button.down,
+                .clicks = event.button.clicks,
+                .x = event.button.x,
+                .y = event.button.y,
+            } },
+            C.SDL_EVENT_MOUSE_WHEEL => .{ .mouse_wheel = .{
+                .common = .fromSdl(&event),
+                .window_id = if (event.button.windowID == 0) null else event.button.windowID,
+                .which = .{
+                    .value = event.button.which,
+                },
+                .scroll_x = event.wheel.x,
+                .scroll_y = event.wheel.y,
+                .direction = @enumFromInt(event.wheel.direction),
+                .x = event.wheel.mouse_x,
+                .y = event.wheel.mouse_y,
+            } },
+            C.SDL_EVENT_USER...C.SDL_EVENT_LAST => .{ .user = .{
+                .common = Common.fromSdl(&event),
+                .event_type = event.type,
+                .window_id = if (event.user.windowID == 0) null else event.user.windowID,
+                .code = event.user.code,
+                .data1 = event.user.data1,
+                .data2 = event.user.data2,
+            } },
             C.SDL_EVENT_ENUM_PADDING => .{
                 .padding = @splat(0),
             },
@@ -613,10 +772,28 @@ pub const Event = union(Type) {
                 .type = C.SDL_EVENT_TERMINATING,
                 .timestamp = val.timestamp,
             } },
-            .unknown => |val| .{ .common = .{
-                .type = val.event_type,
+            .window_resized => |val| .{ .window = .{
+                .type = C.SDL_EVENT_WINDOW_RESIZED,
                 .timestamp = val.common.timestamp,
             } },
+            .key_up => .{
+                .type = C.SDL_EVENT_KEY_UP,
+            },
+            .key_down => .{
+                .type = C.SDL_EVENT_KEY_DOWN,
+            },
+            .mouse_motion => .{
+                .type = C.SDL_EVENT_MOUSE_MOTION,
+            },
+            .mouse_button_down => .{
+                .type = C.SDL_EVENT_MOUSE_BUTTON_DOWN,
+            },
+            .mouse_button_up => .{
+                .type = C.SDL_EVENT_MOUSE_BUTTON_UP,
+            },
+            .mouse_wheel => .{
+                .type = C.SDL_EVENT_MOUSE_WHEEL,
+            },
             .user => |val| .{ .user = .{
                 .type = val.event_type,
                 .timestamp = val.common.timestamp,
@@ -625,12 +802,10 @@ pub const Event = union(Type) {
                 .data1 = val.data1,
                 .data2 = val.data2,
             } },
-            .key_up => .{
-                .type = C.SDL_EVENT_KEY_UP,
-            },
-            .key_down => .{
-                .type = C.SDL_EVENT_KEY_DOWN,
-            },
+            .unknown => |val| .{ .common = .{
+                .type = val.event_type,
+                .timestamp = val.common.timestamp,
+            } },
             .padding => .{
                 .type = C.SDL_EVENT_ENUM_PADDING,
             },
