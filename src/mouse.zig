@@ -55,11 +55,11 @@ pub const ButtonFlags = struct {
     /// Get button flags from an SDL value.
     pub fn fromSdl(value: c.SDL_MouseButtonFlags) ButtonFlags {
         return .{
-            .left = value & c.SDL_BUTTON_LEFT > 0,
-            .middle = value & c.SDL_BUTTON_MIDDLE > 0,
-            .right = value & c.SDL_BUTTON_RIGHT > 0,
-            .side1 = value & c.SDL_BUTTON_X1 > 0,
-            .side2 = value & c.SDL_BUTTON_X2 > 0,
+            .left = value & c.SDL_BUTTON_MASK(c.SDL_BUTTON_LEFT) != 0,
+            .middle = value & c.SDL_BUTTON_MASK(c.SDL_BUTTON_MIDDLE) != 0,
+            .right = value & c.SDL_BUTTON_MASK(c.SDL_BUTTON_RIGHT) != 0,
+            .side1 = value & c.SDL_BUTTON_MASK(c.SDL_BUTTON_X1) != 0,
+            .side2 = value & c.SDL_BUTTON_MASK(c.SDL_BUTTON_X2) != 0,
         };
     }
 
@@ -67,15 +67,15 @@ pub const ButtonFlags = struct {
     pub fn toSdl(self: ButtonFlags) c.SDL_MouseButtonFlags {
         var ret: c.SDL_MouseButtonFlags = 0;
         if (self.left)
-            ret |= c.SDL_BUTTON_LEFT;
+            ret |= c.SDL_BUTTON_MASK(c.SDL_BUTTON_LEFT);
         if (self.middle)
-            ret |= c.SDL_BUTTON_MIDDLE;
+            ret |= c.SDL_BUTTON_MASK(c.SDL_BUTTON_MIDDLE);
         if (self.right)
-            ret |= c.SDL_BUTTON_RIGHT;
+            ret |= c.SDL_BUTTON_MASK(c.SDL_BUTTON_RIGHT);
         if (self.side1)
-            ret |= c.SDL_BUTTON_X1;
+            ret |= c.SDL_BUTTON_MASK(c.SDL_BUTTON_X1);
         if (self.side2)
-            ret |= c.SDL_BUTTON_X2;
+            ret |= c.SDL_BUTTON_MASK(c.SDL_BUTTON_X2);
         return ret;
     }
 };
