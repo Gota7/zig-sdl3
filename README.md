@@ -30,7 +30,7 @@ Choose the command that matches your Zig version and run it in your project's ro
 zig fetch --save git+https://github.com/Gota7/zig-sdl3#master
 ```
 * For Zig master (nightly):
-```
+```sh
 zig fetch --save git+https://github.com/Gota7/zig-sdl3#zig-master
 ```
 
