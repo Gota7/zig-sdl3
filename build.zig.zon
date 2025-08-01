@@ -12,6 +12,24 @@
             .hash = "N-V-__8AAJB7IgJ65BPSqjqzt7j-5xKDklR0h8c11T60iemj",
             .lazy = true,
         },
+        .sdl_net = .{
+            .url = "git+https://github.com/libsdl-org/SDL_net.git#8f5d9df8e42eb31e68aa3aed74ba2ab380e3001e",
+            .hash = "N-V-__8AAK74BwCyuisw6wdXWDDg8sXuHJd_tPk1VKxLTUBK",
+            .lazy = true,
+        },
+        .sdl_ttf = .{
+            .url = "git+https://github.com/libsdl-org/SDL_ttf#release-3.2.2",
+            .hash = "N-V-__8AAF2JgAA_Y5Qzm3b226N8y7ivM-qFVpCo9NkbfO8Y",
+            .lazy = true,
+        },
+        .harfbuzz = .{
+            .url = "git+https://github.com/allyourcodebase/harfbuzz#70b0ac7b35b7408988a64c3caa77b59111c39d2d",
+            .hash = "harfbuzz-8.5.0-Ip1VAmKZAACeiu5O_1PbWCzafs7END80R1dFW5HG9Hql",
+        },
+        .freetype = .{
+            .url = "git+https://github.com/allyourcodebase/freetype#5a20cf829a5fe4bcd9f5158666b80d5558931b74",
+            .hash = "freetype-2.13.3-C3-WdciJAABmQveLV5bkJxVmby23DYriczRrMhkTinnk",
+        },
     },
     .paths = .{
         "build.zig",

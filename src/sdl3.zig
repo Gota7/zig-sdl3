@@ -582,6 +582,9 @@ pub const mouse = @import("mouse.zig");
 /// that several threads might try to use for the first time simultaneously.
 pub const mutex = @import("mutex.zig");
 
+/// TODO documentation.
+pub const net = if (extension_options.net) @import("net.zig") else void;
+
 /// SDL API functions that don't fit elsewhere.
 pub const openURL = @import("misc.zig").openURL;
 
@@ -758,6 +761,9 @@ pub const thread = @import("thread.zig");
 ///
 /// Much of the functionality is involved in converting those two types to other useful forms.
 pub const time = @import("time.zig");
+
+/// TODO documentation.
+pub const ttf = if (extension_options.ttf) @import("ttf.zig") else void;
 
 /// SDL provides time management functionality.
 /// It is useful for dealing with (usually) small durations of time.
