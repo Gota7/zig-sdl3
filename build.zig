@@ -200,6 +200,23 @@ pub fn build(b: *std.Build) !void {
     _ = try runExample(b, sdl3, cfg, example_options);
 }
 
+// Most of this is copied from https://github.com/Beyley/SDL_shadercross_zig/blob/master/build.zig.
+pub fn setupSdlShadercross(b: *std.Build, sdl3: *std.Build.Module, sdl_dep_lib: *std.Build.Step.Compile, linkage: std.builtin.LinkMode, cfg: std.Build.TestOptions) void {
+    const upstream = b.lazyDependency("sdl_shadercross", .{}) orelse return;
+
+    const target = cfg.target orelse b.standardTargetOptions(.{});
+    const lib = b.addLibrary(.{
+        .name = "SDL3_shadercross",
+        .linkage = linkage,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = cfg.optimize,
+            .link_libc = true,
+        }),
+    });
+    lib.linkLibrary(sdl_dep_lib);
+}
+
 pub fn setupDocs(b: *std.Build, sdl3: *std.Build.Module) *std.Build.Step {
     const sdl3_lib = b.addLibrary(.{
         .root_module = sdl3,

@@ -3,6 +3,14 @@
     .version = "0.1.5",
     .minimum_zig_version = "0.15.1",
     .dependencies = .{
+        .freetype = .{
+            .url = "git+https://github.com/allyourcodebase/freetype.git#9d847affbd224cf6a7303ad6d98715e3675ef78c",
+            .hash = "freetype-2.13.3-C3-WdeyJAAD9z8BeYYQ8N3gNlPI9NvHRxg5039S5vhz7",
+        },
+        .harfbuzz = .{
+            .url = "git+https://github.com/allyourcodebase/harfbuzz#6bb522d22cee0ce1d1446bd59fa5b0417f25303e",
+            .hash = "harfbuzz-8.5.0-Ip1VAqCZAADRh-K2AVujG0N3VAal-AKwkZrvlYOaloyB",
+        },
         .sdl = .{
             .url = "git+https://github.com/castholm/SDL.git?ref=v0.3.1%2B3.2.24#1d4b8dcc03bd216712b55318b4ad2402b5511490",
             .hash = "sdl-0.3.1+3.2.24-7uIn9L9AfwFQf90JcTh3Slw__ZA8SEomk6fQI9F8ItY0",
@@ -17,18 +25,14 @@
             .hash = "N-V-__8AAK74BwCyuisw6wdXWDDg8sXuHJd_tPk1VKxLTUBK",
             .lazy = true,
         },
+        .sdl_shadercross = .{
+            .url = "git+https://github.com/libsdl-org/SDL_shadercross#392d12afc1ef084c5cd656307180027399b7a54e",
+            .hash = "N-V-__8AAH9GBgCySY9rt5VJj3A-OGl0Z05BPZ9PgS5Pt1zm",
+        },
         .sdl_ttf = .{
             .url = "git+https://github.com/libsdl-org/SDL_ttf#release-3.2.2",
             .hash = "N-V-__8AAF2JgAA_Y5Qzm3b226N8y7ivM-qFVpCo9NkbfO8Y",
             .lazy = true,
-        },
-        .harfbuzz = .{
-            .url = "git+https://github.com/allyourcodebase/harfbuzz#6bb522d22cee0ce1d1446bd59fa5b0417f25303e",
-            .hash = "harfbuzz-8.5.0-Ip1VAqCZAADRh-K2AVujG0N3VAal-AKwkZrvlYOaloyB",
-        },
-        .freetype = .{
-            .url = "git+https://github.com/allyourcodebase/freetype.git#9d847affbd224cf6a7303ad6d98715e3675ef78c",
-            .hash = "freetype-2.13.3-C3-WdeyJAAD9z8BeYYQ8N3gNlPI9NvHRxg5039S5vhz7",
         },
     },
     .paths = .{
