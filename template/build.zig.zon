@@ -7,8 +7,6 @@
             .hash = "N-V-__8AAOG3BQCJ9cn-N2swm2o5cLmDhmdHmtwNngOChK78",
         },
         .sdl3 = .{
-            // .url = "git+https://github.com/Gota7/zig-sdl3#v0.1.0",
-            // .hash = "sdl3-0.0.1-NmT1Q5LaIAC1lVdodEX_pnLOI44bfRvW1ZuOlqrMY17E"
             .path = "../",
         },
         .zemscripten = .{

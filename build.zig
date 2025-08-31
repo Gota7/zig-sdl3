@@ -230,7 +230,9 @@ pub fn setupSdlShadercross(b: *std.Build, sdl3: *std.Build.Module, translate_c: 
 
     lib.root_module.addCSourceFiles(.{
         .root = upstream.path("src"),
-        .files = &.{},
+        .files = &.{
+            "SDL_shadercross.c",
+        },
     });
 
     lib.installHeadersDirectory(upstream.path("include"), "", .{});
