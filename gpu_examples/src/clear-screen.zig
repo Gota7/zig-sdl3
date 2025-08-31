@@ -1,3 +1,4 @@
+const options = @import("options");
 const sdl3 = @import("sdl3");
 const std = @import("std");
 
@@ -26,7 +27,7 @@ pub fn init(
     try sdl3.init(.{ .video = true });
 
     // Get our GPU device that supports SPIR-V.
-    const shader_formats = sdl3.shadercross.getSpirvShaderFormats() orelse .{}; // TODO: SWITCH ON HLSL OR SPIRV.
+    const shader_formats: sdl3.gpu.ShaderFormatFlags = if (options.spirv) (sdl3.shadercross.getSpirvShaderFormats() orelse .{}) else (sdl3.shadercross.getHlslShaderFormats() orelse .{});
     const device = try sdl3.gpu.Device.init(shader_formats, false, null);
     errdefer device.deinit();
 

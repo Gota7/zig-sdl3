@@ -237,6 +237,16 @@ pub fn setupSdlShadercross(b: *std.Build, sdl3: *std.Build.Module, translate_c: 
 
     lib.installHeadersDirectory(upstream.path("include"), "", .{});
 
+    const spirv_headers = b.dependency("spirv_headers", .{});
+    const spirv_cross = b.dependency("spirv_cross", .{
+        .target = target,
+        .optimize = cfg.optimize,
+        .spv_cross_reflect = true,
+        .spv_cross_cpp = false,
+    });
+    lib.linkLibrary(spirv_cross.artifact("spirv-cross-c"));
+    lib.addIncludePath(spirv_headers.path("include/spirv/1.2/"));
+
     sdl3.linkLibrary(lib);
 }
 
