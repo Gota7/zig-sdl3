@@ -52,14 +52,21 @@ fn loadGraphicsShader(
         .shader_stage = stage,
         .source = shader_code,
     });
-    const spirv_metadata = try sdl3.shadercross.reflectGraphicsSpirv(spirv_code);
+    // const spirv_metadata = try sdl3.shadercross.reflectGraphicsSpirv(spirv_code);
     return try sdl3.shadercross.compileGraphicsShaderFromSpirv(device, .{
         .bytecode = spirv_code,
         .enable_debug = options.gpu_debug,
         .entry_point = "main",
         .name = name,
         .shader_stage = stage,
-    }, spirv_metadata);
+    }, .{
+        .inputs = &.{},
+        .outputs = &.{},
+        .num_samplers = 0,
+        .num_storage_buffers = 0,
+        .num_storage_textures = 0,
+        .num_uniform_buffers = 0,
+    });
 }
 
 pub fn init(
@@ -78,6 +85,7 @@ pub fn init(
     // Make our demo window.
     const window = try sdl3.video.Window.init("Basic Triangle", window_width, window_height, .{});
     errdefer window.deinit();
+    try device.claimWindow(window);
 
     // Prepare pipelines.
     const vertex_shader = loadGraphicsShader(device, vert_shader_name, vert_shader_source, .vertex) catch {
@@ -113,7 +121,6 @@ pub fn init(
     };
 
     // Generate swapchain for window.
-    try device.claimWindow(window);
     app_state.* = state;
     return .run;
 }
@@ -131,7 +138,7 @@ pub fn iterate(
         const render_pass = cmd_buf.beginRenderPass(&.{
             sdl3.gpu.ColorTargetInfo{
                 .texture = texture,
-                .clear_color = .{ .r = 0.3, .g = 0.3, .b = 0.5, .a = 1 },
+                .clear_color = .{ .r = 0, .g = 0, .b = 0, .a = 1 },
                 .load = .clear,
             },
         }, null);
