@@ -1,13 +1,70 @@
 const std = @import("std");
 
-// TODO: USE!!!
 const ShaderFormat = enum {
-    hlsl,
     glsl,
+    hlsl,
     zig,
 };
 
-fn buildExample(b: *std.Build, sdl3: *std.Build.Module, options: *std.Build.Step.Options, name: []const u8, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) !*std.Build.Step.Compile {
+fn setupShader(
+    b: *std.Build,
+    module: *std.Build.Module,
+    name: []const u8,
+    format: ShaderFormat,
+) !void {
+    switch (format) {
+        .glsl => {
+            const vert = std.mem.endsWith(u8, name, ".vert");
+
+            const glslang = try b.findProgram(&.{"glslang"}, &.{});
+            const glslang_cmd = b.addSystemCommand(&.{ glslang, "-V100", "-e", "main", "-S" });
+            if (vert) {
+                glslang_cmd.addArg("vert");
+            } else glslang_cmd.addArg("frag");
+            glslang_cmd.addFileArg(b.path(try std.fmt.allocPrint(b.allocator, "shaders/{s}.glsl", .{name})));
+            glslang_cmd.addArg("-o");
+            const glslang_cmd_out = glslang_cmd.addOutputFileArg(try std.fmt.allocPrint(b.allocator, "{s}.spv", .{name}));
+
+            module.addAnonymousImport(name, .{ .root_source_file = glslang_cmd_out });
+        },
+        .hlsl => module.addAnonymousImport(name, .{ .root_source_file = b.path(try std.fmt.allocPrint(b.allocator, "shaders/{s}.hlsl", .{name})) }),
+        .zig => {
+            const obj = b.addObject(.{
+                .name = name,
+                .root_module = b.addModule(name, .{
+                    .root_source_file = b.path(try std.fmt.allocPrint(b.allocator, "shaders/{s}.zig", .{name})),
+                    .target = b.resolveTargetQuery(.{
+                        .cpu_arch = .spirv64,
+                        .cpu_model = .{ .explicit = &std.Target.spirv.cpu.vulkan_v1_2 },
+                        .cpu_features_add = std.Target.spirv.featureSet(&.{.int64}),
+                        .os_tag = .vulkan,
+                        .ofmt = .spirv,
+                    }),
+                }),
+                .use_llvm = false,
+                .use_lld = false,
+            });
+
+            // TODO: WARN IF NOT FOUND, SAYING GENERATED CODE WILL BE UNOPTIMAL!
+            const spirv_opt = try b.findProgram(&.{"spirv-opt"}, &.{});
+            const spirv_opt_cmd = b.addSystemCommand(&.{ spirv_opt, "-O" });
+            spirv_opt_cmd.addFileArg(obj.getEmittedBin());
+            spirv_opt_cmd.addArg("-o");
+            const spirv_opt_out = spirv_opt_cmd.addOutputFileArg(try std.fmt.allocPrint(b.allocator, "{s}-opt.spv", .{name}));
+
+            module.addAnonymousImport(name, .{ .root_source_file = spirv_opt_out });
+        },
+    }
+}
+
+fn buildExample(
+    b: *std.Build,
+    sdl3: *std.Build.Module,
+    options: *std.Build.Step.Options,
+    name: []const u8,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) !*std.Build.Step.Compile {
     const exe_mod = b.createModule(.{
         .root_source_file = b.path(try std.fmt.allocPrint(b.allocator, "src/{s}.zig", .{name})),
         .target = target,
@@ -17,6 +74,26 @@ fn buildExample(b: *std.Build, sdl3: *std.Build.Module, options: *std.Build.Step
         .name = name,
         .root_module = exe_mod,
     });
+
+    const format: ShaderFormat = .zig; // TODO!!!
+
+    var dir = (try std.fs.openDirAbsolute(b.path("shaders").getPath(b), .{ .iterate = true }));
+    defer dir.close();
+    var dir_iterator = try dir.walk(b.allocator);
+    defer dir_iterator.deinit();
+    while (try dir_iterator.next()) |file| {
+        if (file.kind == .file) {
+            const extension = switch (format) {
+                .glsl => ".glsl",
+                .hlsl => ".hlsl",
+                .zig => ".zig",
+            };
+            if (!std.mem.endsWith(u8, file.basename, extension))
+                continue;
+            try setupShader(b, exe.root_module, file.basename[0..(file.basename.len - extension.len)], format);
+        }
+    }
+
     exe.root_module.addImport("sdl3", sdl3);
     exe.root_module.addOptions("options", options);
     b.installArtifact(exe);
@@ -61,6 +138,7 @@ pub fn build(b: *std.Build) !void {
     const sdl3_mod = sdl3.module("sdl3");
     const options = b.addOptions();
     options.addOption(bool, "spirv", true); // TODO!!!
+    options.addOption(bool, "gpu_debug", b.option(bool, "gpu_debug", "Enable GPU debugging functionality") orelse false);
     try setupExamples(b, sdl3_mod, options, target, optimize);
     try runExample(b, sdl3_mod, options, target, optimize);
 }

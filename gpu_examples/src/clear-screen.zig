@@ -27,8 +27,8 @@ pub fn init(
     try sdl3.init(.{ .video = true });
 
     // Get our GPU device that supports SPIR-V.
-    const shader_formats: sdl3.gpu.ShaderFormatFlags = if (options.spirv) (sdl3.shadercross.getSpirvShaderFormats() orelse .{}) else (sdl3.shadercross.getHlslShaderFormats() orelse .{});
-    const device = try sdl3.gpu.Device.init(shader_formats, false, null);
+    const shader_formats = sdl3.shadercross.getSpirvShaderFormats() orelse @panic("No formats available");
+    const device = try sdl3.gpu.Device.init(shader_formats, options.gpu_debug, null);
     errdefer device.deinit();
 
     // Make our demo window.
