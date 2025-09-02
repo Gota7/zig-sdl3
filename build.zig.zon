@@ -35,8 +35,8 @@
             .lazy = true,
         },
         .spirv_cross = .{
-            .url = "git+https://github.com/Gota7/spirv_cross-zig#98f9223194e00030175c2b7897123c0d56541668",
-            .hash = "spirv_cross-0.0.0-bzNVZEIYAABVgWS8lbg2UuCFpIJSN8VuwnLayLrJlJnc",
+            .url = "git+https://github.com/Gota7/spirv_cross-zig#75cfd40f81f63a678d70d7e3de021edd944eb553",
+            .hash = "spirv_cross-0.0.0-bzNVZC4YAADQdsxyfpxC9Iw8xxietH7xoEQxbHY43bmo",
         },
         .spirv_headers = .{
             .url = "git+https://github.com/KhronosGroup/SPIRV-Headers#1bfd27101e4578d0284061bdf8f09fb4755c7c2d",

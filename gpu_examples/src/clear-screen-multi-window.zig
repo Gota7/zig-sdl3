@@ -25,7 +25,10 @@ pub fn init(
 ) !sdl3.AppResult {
     _ = args;
 
+    // SDL3 setup.
     try sdl3.init(.{ .video = true });
+    sdl3.errors.error_callback = &sdl3.extras.sdlErrZigLog;
+    sdl3.log.setLogOutputFunction(void, &sdl3.extras.sdlLogZigLog, null);
 
     // Get our GPU device that supports SPIR-V.
     const shader_formats = sdl3.shadercross.getSpirvShaderFormats() orelse @panic("No formats available");
@@ -37,6 +40,8 @@ pub fn init(
     errdefer window1.deinit();
     const window2 = try sdl3.video.Window.init("Window 2", 640, 480, .{});
     errdefer window2.deinit();
+    try device.claimWindow(window1);
+    try device.claimWindow(window2);
 
     // Prepare app state.
     const state = try allocator.create(AppState);
@@ -48,8 +53,6 @@ pub fn init(
     };
 
     // Generate swapchain for window.
-    try device.claimWindow(window1);
-    try device.claimWindow(window2);
     app_state.* = state;
     try sdl3.log.log("Press the escape key to quit", .{});
     return .run;

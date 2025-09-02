@@ -52,21 +52,14 @@ fn loadGraphicsShader(
         .shader_stage = stage,
         .source = shader_code,
     });
-    // const spirv_metadata = try sdl3.shadercross.reflectGraphicsSpirv(spirv_code);
+    const spirv_metadata = try sdl3.shadercross.reflectGraphicsSpirv(spirv_code);
     return try sdl3.shadercross.compileGraphicsShaderFromSpirv(device, .{
         .bytecode = spirv_code,
         .enable_debug = options.gpu_debug,
         .entry_point = "main",
         .name = name,
         .shader_stage = stage,
-    }, .{
-        .inputs = &.{},
-        .outputs = &.{},
-        .num_samplers = 0,
-        .num_storage_buffers = 0,
-        .num_storage_textures = 0,
-        .num_uniform_buffers = 0,
-    });
+    }, spirv_metadata);
 }
 
 pub fn init(
@@ -75,7 +68,10 @@ pub fn init(
 ) !sdl3.AppResult {
     _ = args;
 
+    // SDL3 setup.
     try sdl3.init(.{ .video = true });
+    sdl3.errors.error_callback = &sdl3.extras.sdlErrZigLog;
+    sdl3.log.setLogOutputFunction(void, &sdl3.extras.sdlLogZigLog, null);
 
     // Get our GPU device that supports SPIR-V.
     const shader_formats = sdl3.shadercross.getSpirvShaderFormats() orelse @panic("No formats available");
@@ -88,10 +84,7 @@ pub fn init(
     try device.claimWindow(window);
 
     // Prepare pipelines.
-    const vertex_shader = loadGraphicsShader(device, vert_shader_name, vert_shader_source, .vertex) catch {
-        sdl3.log.log("{s}", .{sdl3.errors.get().?}) catch {};
-        @panic(":<");
-    };
+    const vertex_shader = try loadGraphicsShader(device, vert_shader_name, vert_shader_source, .vertex);
     defer device.releaseShader(vertex_shader);
     const fragment_shader = try loadGraphicsShader(device, frag_shader_name, frag_shader_source, .fragment);
     defer device.releaseShader(fragment_shader);

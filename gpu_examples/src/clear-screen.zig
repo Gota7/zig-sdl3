@@ -24,7 +24,10 @@ pub fn init(
 ) !sdl3.AppResult {
     _ = args;
 
+    // SDL3 setup.
     try sdl3.init(.{ .video = true });
+    sdl3.errors.error_callback = &sdl3.extras.sdlErrZigLog;
+    sdl3.log.setLogOutputFunction(void, &sdl3.extras.sdlLogZigLog, null);
 
     // Get our GPU device that supports SPIR-V.
     const shader_formats = sdl3.shadercross.getSpirvShaderFormats() orelse @panic("No formats available");
@@ -34,6 +37,7 @@ pub fn init(
     // Make our demo window.
     const window = try sdl3.video.Window.init("Clear Screen", 640, 480, .{});
     errdefer window.deinit();
+    try device.claimWindow(window);
 
     // Prepare app state.
     const state = try allocator.create(AppState);
@@ -44,7 +48,6 @@ pub fn init(
     };
 
     // Generate swapchain for window.
-    try device.claimWindow(window);
     app_state.* = state;
     return .run;
 }

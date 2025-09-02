@@ -240,7 +240,7 @@ pub fn setupSdlShadercross(b: *std.Build, sdl3: *std.Build.Module, translate_c: 
     const spirv_headers = b.dependency("spirv_headers", .{});
     const spirv_cross = b.dependency("spirv_cross", .{
         .target = target,
-        .optimize = cfg.optimize,
+        .optimize = .ReleaseFast, // There is a C bug in spirv-cross upstream! Ignore undefined behavior for now.
         .spv_cross_reflect = true,
         .spv_cross_cpp = false,
     });

@@ -16,7 +16,7 @@ fn setupShader(
         .glsl => {
             const vert = std.mem.endsWith(u8, name, ".vert");
 
-            const glslang = try b.findProgram(&.{"glslang"}, &.{});
+            const glslang = b.findProgram(&.{"glslang"}, &.{}) catch @panic("glslang not found, can not compile GLSL shaders");
             const glslang_cmd = b.addSystemCommand(&.{ glslang, "-V100", "-e", "main", "-S" });
             if (vert) {
                 glslang_cmd.addArg("vert");
@@ -44,15 +44,18 @@ fn setupShader(
                 .use_llvm = false,
                 .use_lld = false,
             });
+            var shader_out = obj.getEmittedBin();
 
-            // TODO: WARN IF NOT FOUND, SAYING GENERATED CODE WILL BE UNOPTIMAL!
-            const spirv_opt = try b.findProgram(&.{"spirv-opt"}, &.{});
-            const spirv_opt_cmd = b.addSystemCommand(&.{ spirv_opt, "-O" });
-            spirv_opt_cmd.addFileArg(obj.getEmittedBin());
-            spirv_opt_cmd.addArg("-o");
-            const spirv_opt_out = spirv_opt_cmd.addOutputFileArg(try std.fmt.allocPrint(b.allocator, "{s}-opt.spv", .{name}));
+            if (b.findProgram(&.{"spirv-opt"}, &.{})) |spirv_opt| {
+                const spirv_opt_cmd = b.addSystemCommand(&.{ spirv_opt, "-O" });
+                spirv_opt_cmd.addFileArg(obj.getEmittedBin());
+                spirv_opt_cmd.addArg("-o");
+                shader_out = spirv_opt_cmd.addOutputFileArg(try std.fmt.allocPrint(b.allocator, "{s}-opt.spv", .{name}));
+            } else |err| switch (err) {
+                error.FileNotFound => std.debug.print("spirv-opt not found, shader output will be unoptimized!\n", .{}),
+            }
 
-            module.addAnonymousImport(name, .{ .root_source_file = spirv_opt_out });
+            module.addAnonymousImport(name, .{ .root_source_file = shader_out });
         },
     }
 }
@@ -60,6 +63,7 @@ fn setupShader(
 fn buildExample(
     b: *std.Build,
     sdl3: *std.Build.Module,
+    format: ShaderFormat,
     options: *std.Build.Step.Options,
     name: []const u8,
     target: std.Build.ResolvedTarget,
@@ -74,8 +78,6 @@ fn buildExample(
         .name = name,
         .root_module = exe_mod,
     });
-
-    const format: ShaderFormat = .zig; // TODO!!!
 
     var dir = (try std.fs.openDirAbsolute(b.path("shaders").getPath(b), .{ .iterate = true }));
     defer dir.close();
@@ -100,17 +102,31 @@ fn buildExample(
     return exe;
 }
 
-pub fn runExample(b: *std.Build, sdl3: *std.Build.Module, options: *std.Build.Step.Options, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) !void {
+pub fn runExample(
+    b: *std.Build,
+    sdl3: *std.Build.Module,
+    format: ShaderFormat,
+    options: *std.Build.Step.Options,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) !void {
     const run_example: ?[]const u8 = b.option([]const u8, "example", "The example name for running an example") orelse null;
     const run = b.step("run", "Run an example with -Dexample=<example_name> option");
     if (run_example) |example| {
-        const run_art = b.addRunArtifact(try buildExample(b, sdl3, options, example, target, optimize));
+        const run_art = b.addRunArtifact(try buildExample(b, sdl3, format, options, example, target, optimize));
         run_art.step.dependOn(b.getInstallStep());
         run.dependOn(&run_art.step);
     }
 }
 
-pub fn setupExamples(b: *std.Build, sdl3: *std.Build.Module, options: *std.Build.Step.Options, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) !void {
+pub fn setupExamples(
+    b: *std.Build,
+    sdl3: *std.Build.Module,
+    format: ShaderFormat,
+    options: *std.Build.Step.Options,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) !void {
     const exp = b.step("examples", "Build all examples");
     const examples_dir = b.path("src");
     var dir = (try std.fs.openDirAbsolute(examples_dir.getPath(b), .{ .iterate = true }));
@@ -119,7 +135,7 @@ pub fn setupExamples(b: *std.Build, sdl3: *std.Build.Module, options: *std.Build
     defer dir_iterator.deinit();
     while (try dir_iterator.next()) |file| {
         if (file.kind == .file and std.mem.endsWith(u8, file.basename, ".zig")) {
-            _ = try buildExample(b, sdl3, options, file.basename[0 .. file.basename.len - 4], target, optimize);
+            _ = try buildExample(b, sdl3, format, options, file.basename[0 .. file.basename.len - 4], target, optimize);
         }
     }
     exp.dependOn(b.getInstallStep());
@@ -137,8 +153,10 @@ pub fn build(b: *std.Build) !void {
     });
     const sdl3_mod = sdl3.module("sdl3");
     const options = b.addOptions();
-    options.addOption(bool, "spirv", true); // TODO!!!
+
+    const format = b.option(ShaderFormat, "shader_format", "Shader format to use") orelse .zig;
+    options.addOption(bool, "spirv", format != .hlsl);
     options.addOption(bool, "gpu_debug", b.option(bool, "gpu_debug", "Enable GPU debugging functionality") orelse false);
-    try setupExamples(b, sdl3_mod, options, target, optimize);
-    try runExample(b, sdl3_mod, options, target, optimize);
+    try setupExamples(b, sdl3_mod, format, options, target, optimize);
+    try runExample(b, sdl3_mod, format, options, target, optimize);
 }
