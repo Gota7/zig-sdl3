@@ -36,7 +36,7 @@ fn setupShader(
                     .target = b.resolveTargetQuery(.{
                         .cpu_arch = .spirv64,
                         .cpu_model = .{ .explicit = &std.Target.spirv.cpu.vulkan_v1_2 },
-                        .cpu_features_add = std.Target.spirv.featureSet(&.{.int64}),
+                        .cpu_features_add = std.Target.spirv.featureSet(&.{}),
                         .os_tag = .vulkan,
                         .ofmt = .spirv,
                     }),
