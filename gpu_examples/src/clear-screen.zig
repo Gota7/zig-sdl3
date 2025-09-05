@@ -47,7 +47,7 @@ pub fn init(
         .window = window,
     };
 
-    // Generate swapchain for window.
+    // Finish setup.
     app_state.* = state;
     return .run;
 }

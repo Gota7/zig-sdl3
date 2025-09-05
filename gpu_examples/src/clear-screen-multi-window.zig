@@ -52,7 +52,7 @@ pub fn init(
         .window2 = window2,
     };
 
-    // Generate swapchain for window.
+    // Finish setup.
     app_state.* = state;
     try sdl3.log.log("Press the escape key to quit", .{});
     return .run;

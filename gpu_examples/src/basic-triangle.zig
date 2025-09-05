@@ -25,7 +25,7 @@ const small_viewport = sdl3.gpu.Viewport{
     .min_depth = 0.1,
     .max_depth = 1.0,
 };
-const scissor_rect = sdl3.rect.IRect{ .x = 100, .y = 120, .w = 320, .h = 240 };
+const scissor_rect = sdl3.rect.IRect{ .x = 320, .y = 240, .w = 320, .h = 240 };
 
 const AppState = struct {
     device: sdl3.gpu.Device,
@@ -113,8 +113,11 @@ pub fn init(
         .fill_pipeline = fill_pipeline,
     };
 
-    // Generate swapchain for window.
+    // Finish setup.
     app_state.* = state;
+    try sdl3.log.log("Press left to toggle wireframe", .{});
+    try sdl3.log.log("Press down to toggle small viewport", .{});
+    try sdl3.log.log("Press right to toggle scissor rect", .{});
     return .run;
 }
 
@@ -154,8 +157,16 @@ pub fn event(
     app_state: *AppState,
     curr_event: sdl3.events.Event,
 ) !sdl3.AppResult {
-    _ = app_state;
     switch (curr_event) {
+        .key_down => |key| {
+            if (!key.repeat)
+                if (key.key) |val| switch (val) {
+                    .left => app_state.use_wireframe_mode = !app_state.use_wireframe_mode,
+                    .down => app_state.use_small_viewport = !app_state.use_small_viewport,
+                    .right => app_state.use_scissor_rect = !app_state.use_scissor_rect,
+                    else => {},
+                };
+        },
         .terminating => return .success,
         .quit => return .success,
         else => {},
