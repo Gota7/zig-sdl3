@@ -26,18 +26,40 @@ const PositionColorVertex = packed struct {
     color: @Vector(4, u8),
 };
 
-const vertices = [_]PositionColorVertex{
-    .{ .position = .{ -1, -1, 0 }, .color = .{ 255, 0, 0, 255 } },
-    .{ .position = .{ 1, -1, 0 }, .color = .{ 0, 255, 0, 255 } },
-    .{ .position = .{ 0, 1, 0 }, .color = .{ 0, 0, 255, 255 } },
-};
+const vertices: struct {
+    cw: [3]PositionColorVertex = .{
+        .{ .position = .{ -1, -1, 0 }, .color = .{ 255, 0, 0, 255 } },
+        .{ .position = .{ 1, -1, 0 }, .color = .{ 0, 255, 0, 255 } },
+        .{ .position = .{ 0, 1, 0 }, .color = .{ 0, 0, 255, 255 } },
+    },
+    ccw: [3]PositionColorVertex = .{
+        .{ .position = .{ 0, 1, 0 }, .color = .{ 255, 0, 0, 255 } },
+        .{ .position = .{ 1, -1, 0 }, .color = .{ 0, 255, 0, 255 } },
+        .{ .position = .{ -1, -1, 0 }, .color = .{ 0, 0, 255, 255 } },
+    },
+} = .{};
 const vertices_bytes = std.mem.asBytes(&vertices);
+const vertices_cw_offset = @offsetOf(@TypeOf(vertices), "cw");
+const vertices_ccw_offset = @offsetOf(@TypeOf(vertices), "ccw");
+const vertices_cw_size = @sizeOf(@FieldType(@TypeOf(vertices), "cw"));
+const vertices_ccw_size = @sizeOf(@FieldType(@TypeOf(vertices), "ccw"));
+
+const mode_names = [_][:0]const u8{
+    "CW_CullNone",
+    "CW_CullFront",
+    "CW_CullBack",
+    "CCW_CullNone",
+    "CCW_CullFront",
+    "CCW_CullBack",
+};
 
 const AppState = struct {
     device: sdl3.gpu.Device,
     window: sdl3.video.Window,
-    pipeline: sdl3.gpu.GraphicsPipeline,
-    vertex_buffer: sdl3.gpu.Buffer,
+    pipelines: [mode_names.len]sdl3.gpu.GraphicsPipeline,
+    vertex_buffer_cw: sdl3.gpu.Buffer,
+    vertex_buffer_ccw: sdl3.gpu.Buffer,
+    curr_mode: usize = 0,
 };
 
 fn loadGraphicsShader(
@@ -82,7 +104,7 @@ pub fn init(
     errdefer device.deinit();
 
     // Make our demo window.
-    const window = try sdl3.video.Window.init("Basic Vertex Buffer", window_width, window_height, .{});
+    const window = try sdl3.video.Window.init("Cull Mode", window_width, window_height, .{});
     errdefer window.deinit();
     try device.claimWindow(window);
 
@@ -91,7 +113,7 @@ pub fn init(
     defer device.releaseShader(vertex_shader);
     const fragment_shader = try loadGraphicsShader(device, frag_shader_name, frag_shader_source, .fragment);
     defer device.releaseShader(fragment_shader);
-    const pipeline_create_info = sdl3.gpu.GraphicsPipelineCreateInfo{
+    var pipeline_create_info = sdl3.gpu.GraphicsPipelineCreateInfo{
         .target_info = .{
             .color_target_descriptions = &.{
                 .{
@@ -125,15 +147,18 @@ pub fn init(
             },
         },
     };
-    const pipeline = try device.createGraphicsPipeline(pipeline_create_info);
-    errdefer device.releaseGraphicsPipeline(pipeline);
 
-    // Prepare vertex buffer.
-    const vertex_buffer = try device.createBuffer(.{
+    // Prepare vertex buffers.
+    const vertex_buffer_cw = try device.createBuffer(.{
         .usage = .{ .vertex = true },
-        .size = vertices_bytes.len,
+        .size = vertices_cw_size,
     });
-    errdefer device.releaseBuffer(vertex_buffer);
+    errdefer device.releaseBuffer(vertex_buffer_cw);
+    const vertex_buffer_ccw = try device.createBuffer(.{
+        .usage = .{ .vertex = true },
+        .size = vertices_ccw_size,
+    });
+    errdefer device.releaseBuffer(vertex_buffer_ccw);
 
     // Setup transfer buffer.
     const transfer_buffer = try device.createTransferBuffer(.{
@@ -155,12 +180,24 @@ pub fn init(
         copy_pass.uploadToBuffer(
             .{
                 .transfer_buffer = transfer_buffer,
-                .offset = 0,
+                .offset = vertices_cw_offset,
             },
             .{
-                .buffer = vertex_buffer,
+                .buffer = vertex_buffer_cw,
                 .offset = 0,
-                .size = vertices_bytes.len,
+                .size = vertices_cw_size,
+            },
+            false,
+        );
+        copy_pass.uploadToBuffer(
+            .{
+                .transfer_buffer = transfer_buffer,
+                .offset = vertices_ccw_offset,
+            },
+            .{
+                .buffer = vertex_buffer_ccw,
+                .offset = 0,
+                .size = vertices_ccw_size,
             },
             false,
         );
@@ -170,11 +207,26 @@ pub fn init(
     // Prepare app state.
     const state = try allocator.create(AppState);
     errdefer allocator.destroy(state);
+
+    try sdl3.log.log("Press Left/Right to switch between modes", .{});
+    try sdl3.log.log("Current Mode: {s}", .{mode_names[0]});
+
+    // Prevent potential errdefer leaks by making the pipelines here.
+    var pipelines: [mode_names.len]sdl3.gpu.GraphicsPipeline = undefined;
+    for (0..pipelines.len) |i| {
+        pipeline_create_info.rasterizer_state.cull_mode = @enumFromInt(i % 3);
+        pipeline_create_info.rasterizer_state.front_face = if (i > 2) .clockwise else .counter_clockwise;
+        pipelines[i] = try device.createGraphicsPipeline(pipeline_create_info);
+        errdefer device.releaseGraphicsPipeline(pipelines[i]); // TODO: Prevent possible leak here?
+    }
+
+    // Set state.
     state.* = .{
         .device = device,
         .window = window,
-        .pipeline = pipeline,
-        .vertex_buffer = vertex_buffer,
+        .pipelines = pipelines,
+        .vertex_buffer_cw = vertex_buffer_cw,
+        .vertex_buffer_ccw = vertex_buffer_ccw,
     };
 
     // Finish setup.
@@ -200,13 +252,20 @@ pub fn iterate(
             },
         }, null);
         defer render_pass.end();
-        render_pass.bindGraphicsPipeline(app_state.pipeline);
-        render_pass.bindVertexBuffers(
-            0,
-            &.{
-                .{ .buffer = app_state.vertex_buffer, .offset = 0 },
-            },
-        );
+
+        // Choose the pipeline currently set.
+        render_pass.bindGraphicsPipeline(app_state.pipelines[app_state.curr_mode]);
+
+        // Bind the vertex buffers then draw the primitives.
+        render_pass.setViewport(.{ .region = .{ .x = 0, .y = 0, .w = 320, .h = 480 } });
+        render_pass.bindVertexBuffers(0, &.{
+            .{ .buffer = app_state.vertex_buffer_cw, .offset = 0 },
+        });
+        render_pass.drawPrimitives(3, 1, 0, 0);
+        render_pass.setViewport(.{ .region = .{ .x = 320, .y = 0, .w = 320, .h = 480 } });
+        render_pass.bindVertexBuffers(0, &.{
+            .{ .buffer = app_state.vertex_buffer_ccw, .offset = 0 },
+        });
         render_pass.drawPrimitives(3, 1, 0, 0);
     }
 
@@ -220,8 +279,25 @@ pub fn event(
     app_state: *AppState,
     curr_event: sdl3.events.Event,
 ) !sdl3.AppResult {
-    _ = app_state;
     switch (curr_event) {
+        .key_down => |key| {
+            if (!key.repeat)
+                if (key.key) |val| switch (val) {
+                    .left => {
+                        if (app_state.curr_mode == 0) {
+                            app_state.curr_mode = app_state.pipelines.len - 1;
+                        } else app_state.curr_mode -= 1;
+                        try sdl3.log.log("Current Mode: {s}", .{mode_names[app_state.curr_mode]});
+                    },
+                    .right => {
+                        if (app_state.curr_mode >= app_state.pipelines.len - 1) {
+                            app_state.curr_mode = 0;
+                        } else app_state.curr_mode += 1;
+                        try sdl3.log.log("Current Mode: {s}", .{mode_names[app_state.curr_mode]});
+                    },
+                    else => {},
+                };
+        },
         .terminating => return .success,
         .quit => return .success,
         else => {},
@@ -235,8 +311,11 @@ pub fn quit(
 ) void {
     _ = result;
     if (app_state) |val| {
-        val.device.releaseBuffer(val.vertex_buffer);
-        val.device.releaseGraphicsPipeline(val.pipeline);
+        val.device.releaseBuffer(val.vertex_buffer_ccw);
+        val.device.releaseBuffer(val.vertex_buffer_cw);
+        for (val.pipelines) |pipeline| {
+            val.device.releaseGraphicsPipeline(pipeline);
+        }
         val.device.deinit();
         val.window.deinit();
         allocator.destroy(val);
