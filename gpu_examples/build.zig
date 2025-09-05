@@ -14,13 +14,9 @@ fn setupShader(
 ) !void {
     switch (format) {
         .glsl => {
-            const vert = std.mem.endsWith(u8, name, ".vert");
-
             const glslang = b.findProgram(&.{"glslang"}, &.{}) catch @panic("glslang not found, can not compile GLSL shaders");
             const glslang_cmd = b.addSystemCommand(&.{ glslang, "-V100", "-e", "main", "-S" });
-            if (vert) {
-                glslang_cmd.addArg("vert");
-            } else glslang_cmd.addArg("frag");
+            glslang_cmd.addArg(name[std.mem.lastIndexOf(u8, name, ".").? + 1 ..]);
             glslang_cmd.addFileArg(b.path(try std.fmt.allocPrint(b.allocator, "shaders/{s}.glsl", .{name})));
             glslang_cmd.addArg("-o");
             const glslang_cmd_out = glslang_cmd.addOutputFileArg(try std.fmt.allocPrint(b.allocator, "{s}.spv", .{name}));

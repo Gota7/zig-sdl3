@@ -13,28 +13,31 @@ pub const WinMainCRTStartup = void;
 /// Allocator we will use.
 const allocator = std.heap.smp_allocator;
 
-const vert_shader_source = @embedFile("rawTriangle.vert");
-const vert_shader_name = "Raw Triangle";
+const vert_shader_source = @embedFile("positionColor.vert");
+const vert_shader_name = "Position Color";
 const frag_shader_source = @embedFile("solidColor.frag");
 const frag_shader_name = "Solid Color";
 
 const window_width = 640;
 const window_height = 480;
-const small_viewport = sdl3.gpu.Viewport{
-    .region = .{ .x = 100, .y = 120, .w = 320, .h = 240 },
-    .min_depth = 0.1,
-    .max_depth = 1.0,
+
+const PositionColorVertex = struct {
+    position: @Vector(3, f32),
+    color: @Vector(4, u8),
 };
-const scissor_rect = sdl3.rect.IRect{ .x = 320, .y = 240, .w = 320, .h = 240 };
+
+const vertices = [_]PositionColorVertex{
+    .{ .position = .{ -1, -1, 0 }, .color = .{ 255, 0, 0, 255 } },
+    .{ .position = .{ 1, -1, 0 }, .color = .{ 0, 255, 0, 255 } },
+    .{ .position = .{ 0, 1, 0 }, .color = .{ 0, 0, 255, 255 } },
+};
+const vertices_bytes = std.mem.asBytes(&vertices);
 
 const AppState = struct {
     device: sdl3.gpu.Device,
     window: sdl3.video.Window,
-    fill_pipeline: sdl3.gpu.GraphicsPipeline,
-    line_pipeline: sdl3.gpu.GraphicsPipeline,
-    use_wireframe_mode: bool = false,
-    use_small_viewport: bool = false,
-    use_scissor_rect: bool = false,
+    pipeline: sdl3.gpu.GraphicsPipeline,
+    vertex_buffer: sdl3.gpu.Buffer,
 };
 
 fn loadGraphicsShader(
@@ -79,7 +82,7 @@ pub fn init(
     errdefer device.deinit();
 
     // Make our demo window.
-    const window = try sdl3.video.Window.init("Basic Triangle", window_width, window_height, .{});
+    const window = try sdl3.video.Window.init("Basic Vertex Buffer", window_width, window_height, .{});
     errdefer window.deinit();
     try device.claimWindow(window);
 
@@ -88,7 +91,7 @@ pub fn init(
     defer device.releaseShader(vertex_shader);
     const fragment_shader = try loadGraphicsShader(device, frag_shader_name, frag_shader_source, .fragment);
     defer device.releaseShader(fragment_shader);
-    var pipeline_create_info = sdl3.gpu.GraphicsPipelineCreateInfo{
+    const pipeline_create_info = sdl3.gpu.GraphicsPipelineCreateInfo{
         .target_info = .{
             .color_target_descriptions = &.{
                 .{
@@ -98,12 +101,71 @@ pub fn init(
         },
         .vertex_shader = vertex_shader,
         .fragment_shader = fragment_shader,
+        .vertex_input_state = .{
+            .vertex_buffer_descriptions = &.{
+                .{
+                    .slot = 0,
+                    .pitch = @sizeOf(PositionColorVertex),
+                    .input_rate = .vertex,
+                },
+            },
+            .vertex_attributes = &.{
+                .{
+                    .location = 0,
+                    .buffer_slot = 0,
+                    .format = .f32x3,
+                    .offset = @offsetOf(PositionColorVertex, "position"),
+                },
+                .{
+                    .location = 1,
+                    .buffer_slot = 0,
+                    .format = .u8x4_normalized,
+                    .offset = @offsetOf(PositionColorVertex, "color"),
+                },
+            },
+        },
     };
-    const fill_pipeline = try device.createGraphicsPipeline(pipeline_create_info);
-    errdefer device.releaseGraphicsPipeline(fill_pipeline);
-    pipeline_create_info.rasterizer_state.fill_mode = .line;
-    const line_pipeline = try device.createGraphicsPipeline(pipeline_create_info);
-    errdefer device.releaseGraphicsPipeline(line_pipeline);
+    const pipeline = try device.createGraphicsPipeline(pipeline_create_info);
+    errdefer device.releaseGraphicsPipeline(pipeline);
+
+    // Prepare vertex buffer.
+    const vertex_buffer = try device.createBuffer(.{
+        .usage = .{ .vertex = true },
+        .size = vertices_bytes.len,
+    });
+    errdefer device.releaseBuffer(vertex_buffer);
+
+    // Setup transfer buffer.
+    const transfer_buffer = try device.createTransferBuffer(.{
+        .usage = .upload,
+        .size = vertices_bytes.len,
+    });
+    defer device.releaseTransferBuffer(transfer_buffer);
+    {
+        const transfer_buffer_mapped = try device.mapTransferBuffer(transfer_buffer, false);
+        defer device.unmapTransferBuffer(transfer_buffer);
+        @memcpy(transfer_buffer_mapped, vertices_bytes);
+    }
+
+    // Upload transfer data.
+    const cmd_buf = try device.acquireCommandBuffer();
+    {
+        const copy_pass = cmd_buf.beginCopyPass();
+        defer copy_pass.end();
+        copy_pass.uploadToBuffer(
+            .{
+                .transfer_buffer = transfer_buffer,
+                .offset = 0,
+            },
+            .{
+                .buffer = vertex_buffer,
+                .offset = 0,
+                .size = vertices_bytes.len,
+            },
+            false,
+        );
+    }
+    try cmd_buf.submit();
 
     // Prepare app state.
     const state = try allocator.create(AppState);
@@ -111,15 +173,12 @@ pub fn init(
     state.* = .{
         .device = device,
         .window = window,
-        .line_pipeline = line_pipeline,
-        .fill_pipeline = fill_pipeline,
+        .pipeline = pipeline,
+        .vertex_buffer = vertex_buffer,
     };
 
     // Finish setup.
     app_state.* = state;
-    try sdl3.log.log("Press left to toggle wireframe", .{});
-    try sdl3.log.log("Press down to toggle small viewport", .{});
-    try sdl3.log.log("Press right to toggle scissor rect", .{});
     return .run;
 }
 
@@ -141,11 +200,13 @@ pub fn iterate(
             },
         }, null);
         defer render_pass.end();
-        render_pass.bindGraphicsPipeline(if (app_state.use_wireframe_mode) app_state.line_pipeline else app_state.fill_pipeline);
-        if (app_state.use_small_viewport)
-            render_pass.setViewport(small_viewport);
-        if (app_state.use_scissor_rect)
-            render_pass.setScissor(scissor_rect);
+        render_pass.bindGraphicsPipeline(app_state.pipeline);
+        render_pass.bindVertexBuffers(
+            0,
+            &.{
+                .{ .buffer = app_state.vertex_buffer, .offset = 0 },
+            },
+        );
         render_pass.drawPrimitives(3, 1, 0, 0);
     }
 
@@ -159,16 +220,8 @@ pub fn event(
     app_state: *AppState,
     curr_event: sdl3.events.Event,
 ) !sdl3.AppResult {
+    _ = app_state;
     switch (curr_event) {
-        .key_down => |key| {
-            if (!key.repeat)
-                if (key.key) |val| switch (val) {
-                    .left => app_state.use_wireframe_mode = !app_state.use_wireframe_mode,
-                    .down => app_state.use_small_viewport = !app_state.use_small_viewport,
-                    .right => app_state.use_scissor_rect = !app_state.use_scissor_rect,
-                    else => {},
-                };
-        },
         .terminating => return .success,
         .quit => return .success,
         else => {},
@@ -182,8 +235,8 @@ pub fn quit(
 ) void {
     _ = result;
     if (app_state) |val| {
-        val.device.releaseGraphicsPipeline(val.fill_pipeline);
-        val.device.releaseGraphicsPipeline(val.line_pipeline);
+        val.device.releaseBuffer(val.vertex_buffer);
+        val.device.releaseGraphicsPipeline(val.pipeline);
         val.device.deinit();
         val.window.deinit();
         allocator.destroy(val);
