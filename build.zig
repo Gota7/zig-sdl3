@@ -70,6 +70,8 @@ pub fn build(b: *std.Build) !void {
     extension_options.addOption(bool, "main", sdl3_main);
     const ext_image = b.option(bool, "ext_image", "Enable SDL_image extension") orelse false;
     extension_options.addOption(bool, "image", ext_image);
+    const ext_shadercross = b.option(bool, "ext_shadercross", "Enable SDL_shadercross extension") orelse false;
+    extension_options.addOption(bool, "shadercross", ext_shadercross);
 
     const c_source_code = b.fmt(
         \\#include <SDL3/SDL.h>
@@ -78,9 +80,11 @@ pub fn build(b: *std.Build) !void {
         \\#include <SDL3/SDL_vulkan.h>
         \\
         \\{s}
+        \\{s}
     , .{
         if (!sdl3_main) "#define SDL_MAIN_NOIMPL\n" else "",
         if (ext_image) "#include <SDL3_image/SDL_image.h>\n" else "",
+        if (ext_shadercross) "#include <SDL3_shadercross/SDL_shadercross.h>\n" else "",
     });
     const c_source_file_step = b.addWriteFiles();
     const c_source_path = c_source_file_step.add("c.c", c_source_code);
@@ -107,6 +111,9 @@ pub fn build(b: *std.Build) !void {
     sdl3.linkLibrary(sdl_dep_lib);
     if (ext_image) {
         setupSdlImage(b, sdl3, translate_c, sdl_dep_lib, c_sdl_preferred_linkage, cfg);
+    }
+    if (ext_shadercross) {
+        setupSdlShadercross(b, sdl3, translate_c, sdl_dep_lib, c_sdl_preferred_linkage, cfg);
     }
 
     _ = setupDocs(b, sdl3);
@@ -206,6 +213,49 @@ pub fn setupSdlImage(b: *std.Build, sdl3: *std.Build.Module, translate_c: *std.B
     }
 
     lib.installHeadersDirectory(upstream.path("include"), "", .{});
+
+    sdl3.linkLibrary(lib);
+}
+
+// Most of this is copied from https://github.com/Beyley/SDL_shadercross_zig/blob/master/build.zig.
+pub fn setupSdlShadercross(b: *std.Build, sdl3: *std.Build.Module, translate_c: *std.Build.Step.TranslateC, sdl_dep_lib: *std.Build.Step.Compile, linkage: std.builtin.LinkMode, cfg: Config) void {
+    const upstream = b.lazyDependency("sdl_shadercross", .{}) orelse return;
+
+    const target = cfg.target;
+    const lib = b.addLibrary(.{
+        .name = "SDL3_shadercross",
+        .version = .{ .major = 3, .minor = 0, .patch = 0 },
+        .linkage = linkage,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = cfg.optimize,
+            .link_libc = true,
+        }),
+    });
+    lib.root_module.linkLibrary(sdl_dep_lib);
+
+    translate_c.addIncludePath(upstream.path("include"));
+    lib.root_module.addIncludePath(upstream.path("include"));
+    lib.root_module.addIncludePath(upstream.path("src"));
+
+    lib.root_module.addCSourceFiles(.{
+        .root = upstream.path("src"),
+        .files = &.{
+            "SDL_shadercross.c",
+        },
+    });
+
+    lib.installHeadersDirectory(upstream.path("include"), "", .{});
+
+    const spirv_headers = b.dependency("spirv_headers", .{});
+    const spirv_cross = b.dependency("spirv_cross", .{
+        .target = target,
+        .optimize = .ReleaseFast, // There is a C bug in spirv-cross upstream! Ignore undefined behavior for now.
+        .spv_cross_reflect = true,
+        .spv_cross_cpp = false,
+    });
+    lib.linkLibrary(spirv_cross.artifact("spirv-cross-c"));
+    lib.addIncludePath(spirv_headers.path("include/spirv/1.2/"));
 
     sdl3.linkLibrary(lib);
 }

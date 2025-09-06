@@ -713,6 +713,9 @@ pub const Scancode = @import("scancode.zig").Scancode;
 /// This causes SDL to scan the system for sensors, and load appropriate drivers.
 pub const sensor = @import("sensor.zig");
 
+/// Extension library for cross-compiling shaders at runtime.
+pub const shadercross = if (extension_options.shadercross) @import("shadercross.zig") else void;
+
 /// The storage API is a high-level API designed to abstract away the portability issues that come up when using something lower-level.
 ///
 /// See https://wiki.libsdl.org/SDL3/CategoryStorage for more details.
@@ -1170,7 +1173,7 @@ pub fn runOnMainThread(
 ) !void {
     const Cb = struct {
         fn run(user_data_c: ?*anyopaque) callconv(.c) void {
-            callback(@alignCast(@ptrCast(user_data_c)));
+            callback(@ptrCast(@alignCast(user_data_c)));
         }
     };
     const ret = c.SDL_RunOnMainThread(Cb.run, user_data, wait_complete);
@@ -1770,7 +1773,7 @@ fn sdlAlloc(ptr: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr:
     _ = ret_addr;
     const ret = c.SDL_malloc(len);
     if (ret) |val| {
-        return @as([*]u8, @alignCast(@ptrCast(val)));
+        return @as([*]u8, @ptrCast(@alignCast(val)));
     }
     return null;
 }
@@ -1790,7 +1793,7 @@ fn sdlRemap(ptr: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len
     _ = ret_addr;
     const ret = c.SDL_realloc(memory.ptr, new_len);
     if (ret) |val| {
-        return @as([*]u8, @alignCast(@ptrCast(val)));
+        return @as([*]u8, @ptrCast(@alignCast(val)));
     }
     return null;
 }
@@ -1860,12 +1863,12 @@ pub fn setMemoryFunctions(
             mem: ?*anyopaque,
             size: usize,
         ) callconv(.c) ?*anyopaque {
-            return realloc_fn(@alignCast(@ptrCast(mem)), size);
+            return realloc_fn(@ptrCast(@alignCast(mem)), size);
         }
         pub fn free(
             mem: ?*anyopaque,
         ) callconv(.c) void {
-            return free_fn(@alignCast(@ptrCast(mem.?)));
+            return free_fn(@ptrCast(@alignCast(mem.?)));
         }
     };
     const ret = c.SDL_SetMemoryFunctions(
