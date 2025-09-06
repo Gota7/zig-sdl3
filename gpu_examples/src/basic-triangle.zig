@@ -120,6 +120,10 @@ pub fn init(
     try sdl3.log.log("Press left to toggle wireframe", .{});
     try sdl3.log.log("Press down to toggle small viewport", .{});
     try sdl3.log.log("Press right to toggle scissor rect", .{});
+    try sdl3.log.log(
+        "State: {{Wireframe: {any}, SmallViewport: {any}, ScissorRect: {any}}}",
+        .{ state.use_wireframe_mode, state.use_small_viewport, state.use_scissor_rect },
+    );
     return .run;
 }
 
