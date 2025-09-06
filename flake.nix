@@ -1,6 +1,5 @@
 {
   description = "A lightweight wrapper to zig-ify SDL3.";
-
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";

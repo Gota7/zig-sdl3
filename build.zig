@@ -1,6 +1,16 @@
 const std = @import("std");
 const zig = @import("builtin");
 
+const image = @import("build/image.zig");
+const net = @import("build/net.zig");
+const ttf = @import("build/ttf.zig");
+
+const ExampleOptions = struct {
+    ext_image: bool,
+    ext_net: bool,
+    ext_ttf: bool,
+};
+
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -70,6 +80,10 @@ pub fn build(b: *std.Build) !void {
     extension_options.addOption(bool, "main", sdl3_main);
     const ext_image = b.option(bool, "ext_image", "Enable SDL_image extension") orelse false;
     extension_options.addOption(bool, "image", ext_image);
+    const ext_net = b.option(bool, "ext_net", "Enable SDL_net extension") orelse false;
+    extension_options.addOption(bool, "net", ext_net);
+    const ext_ttf = b.option(bool, "ext_ttf", "Enable SDL_ttf extension") orelse false;
+    extension_options.addOption(bool, "ttf", ext_ttf);
 
     const c_source_code = b.fmt(
         \\#include <SDL3/SDL.h>
@@ -78,10 +92,15 @@ pub fn build(b: *std.Build) !void {
         \\#include <SDL3/SDL_vulkan.h>
         \\
         \\{s}
+        \\{s}
+        \\{s}
     , .{
         if (!sdl3_main) "#define SDL_MAIN_NOIMPL\n" else "",
         if (ext_image) "#include <SDL3_image/SDL_image.h>\n" else "",
+        if (ext_net) "#include <SDL3_net/SDL_net.h>\n" else "",
+        if (ext_ttf) "#include <SDL3_ttf/SDL_ttf.h>\n#include <SDL3_ttf/SDL_textengine.h>\n" else "",
     });
+
     const c_source_file_step = b.addWriteFiles();
     const c_source_path = c_source_file_step.add("c.c", c_source_code);
 
@@ -103,111 +122,38 @@ pub fn build(b: *std.Build) !void {
         },
     });
 
+    const example_options = ExampleOptions{
+        .ext_image = ext_image,
+        .ext_net = ext_net,
+        .ext_ttf = ext_ttf,
+    };
+
     sdl3.addOptions("extension_options", extension_options);
     sdl3.linkLibrary(sdl_dep_lib);
     if (ext_image) {
-        setupSdlImage(b, sdl3, translate_c, sdl_dep_lib, c_sdl_preferred_linkage, cfg);
+        image.setup(b, sdl3, translate_c, sdl_dep_lib, c_sdl_preferred_linkage, .{
+            .optimize = optimize,
+            .target = target,
+        });
+    }
+    if (ext_net) {
+        net.setup(b, sdl3, translate_c, sdl_dep_lib, c_sdl_preferred_linkage, .{
+            .optimize = optimize,
+            .target = target,
+        });
+    }
+    if (ext_ttf) {
+        ttf.setup(b, sdl3, translate_c, sdl_dep_lib, c_sdl_preferred_linkage, .{
+            .optimize = optimize,
+            .target = target,
+        });
     }
 
     _ = setupDocs(b, sdl3);
     _ = setupTest(b, cfg, extension_options, c_module);
-    _ = try setupExamples(b, sdl3, cfg);
-    _ = try runExample(b, sdl3, cfg);
-}
 
-// Most of this is copied from https://github.com/allyourcodebase/SDL_image/blob/main/build.zig.
-pub fn setupSdlImage(b: *std.Build, sdl3: *std.Build.Module, translate_c: *std.Build.Step.TranslateC, sdl_dep_lib: *std.Build.Step.Compile, linkage: std.builtin.LinkMode, cfg: Config) void {
-    const upstream = b.lazyDependency("sdl_image", .{}) orelse return;
-
-    const target = cfg.target;
-    const lib = b.addLibrary(.{
-        .name = "SDL3_image",
-        .version = .{ .major = 3, .minor = 2, .patch = 4 },
-        .linkage = linkage,
-        .root_module = b.createModule(.{
-            .target = target,
-            .optimize = cfg.optimize,
-            .link_libc = true,
-        }),
-    });
-    lib.root_module.linkLibrary(sdl_dep_lib);
-
-    // Use stb_image for loading JPEG and PNG files. Native alternatives such as
-    // Windows Imaging Component and Apple's Image I/O framework are not yet
-    // supported by this build script.
-    lib.root_module.addCMacro("USE_STBIMAGE", "");
-
-    // The following are options for supported file formats. AVIF, JXL, TIFF,
-    // and WebP are not yet supported by this build script, as they require
-    // additional dependencies.
-    if (b.option(bool, "image_enable_bmp", "Support loading BMP images") orelse true)
-        lib.root_module.addCMacro("LOAD_BMP", "");
-    if (b.option(bool, "image_enable_gif", "Support loading GIF images") orelse true)
-        lib.root_module.addCMacro("LOAD_GIF", "");
-    if (b.option(bool, "image_enable_jpg", "Support loading JPEG images") orelse true)
-        lib.root_module.addCMacro("LOAD_JPG", "");
-    if (b.option(bool, "image_enable_lbm", "Support loading LBM images") orelse true)
-        lib.root_module.addCMacro("LOAD_LBM", "");
-    if (b.option(bool, "image_enable_pcx", "Support loading PCX images") orelse true)
-        lib.root_module.addCMacro("LOAD_PCX", "");
-    if (b.option(bool, "image_enable_png", "Support loading PNG images") orelse true)
-        lib.root_module.addCMacro("LOAD_PNG", "");
-    if (b.option(bool, "image_enable_pnm", "Support loading PNM images") orelse true)
-        lib.root_module.addCMacro("LOAD_PNM", "");
-    if (b.option(bool, "image_enable_qoi", "Support loading QOI images") orelse true)
-        lib.root_module.addCMacro("LOAD_QOI", "");
-    if (b.option(bool, "image_enable_svg", "Support loading SVG images") orelse true)
-        lib.root_module.addCMacro("LOAD_SVG", "");
-    if (b.option(bool, "image_enable_tga", "Support loading TGA images") orelse true)
-        lib.root_module.addCMacro("LOAD_TGA", "");
-    if (b.option(bool, "image_enable_xcf", "Support loading XCF images") orelse true)
-        lib.root_module.addCMacro("LOAD_XCF", "");
-    if (b.option(bool, "image_enable_xpm", "Support loading XPM images") orelse true)
-        lib.root_module.addCMacro("LOAD_XPM", "");
-    if (b.option(bool, "image_enable_xv", "Support loading XV images") orelse true)
-        lib.root_module.addCMacro("LOAD_XV", "");
-
-    translate_c.addIncludePath(upstream.path("include"));
-    lib.root_module.addIncludePath(upstream.path("include"));
-    lib.root_module.addIncludePath(upstream.path("src"));
-
-    lib.root_module.addCSourceFiles(.{
-        .root = upstream.path("src"),
-        .files = &.{
-            "IMG.c",
-            "IMG_WIC.c",
-            "IMG_avif.c",
-            "IMG_bmp.c",
-            "IMG_gif.c",
-            "IMG_jpg.c",
-            "IMG_jxl.c",
-            "IMG_lbm.c",
-            "IMG_pcx.c",
-            "IMG_png.c",
-            "IMG_pnm.c",
-            "IMG_qoi.c",
-            "IMG_stb.c",
-            "IMG_svg.c",
-            "IMG_tga.c",
-            "IMG_tif.c",
-            "IMG_webp.c",
-            "IMG_xcf.c",
-            "IMG_xpm.c",
-            "IMG_xv.c",
-        },
-    });
-
-    if (target.result.os.tag == .macos) {
-        lib.root_module.addCSourceFile(.{
-            .file = upstream.path("src/IMG_ImageIO.m"),
-        });
-        lib.root_module.linkFramework("Foundation", .{});
-        lib.root_module.linkFramework("ApplicationServices", .{});
-    }
-
-    lib.installHeadersDirectory(upstream.path("include"), "", .{});
-
-    sdl3.linkLibrary(lib);
+    _ = try setupExamples(b, sdl3, cfg, example_options);
+    _ = try runExample(b, sdl3, cfg, example_options);
 }
 
 pub fn setupDocs(b: *std.Build, sdl3: *std.Build.Module) *std.Build.Step {
@@ -243,17 +189,28 @@ pub fn setupExample(b: *std.Build, sdl3: *std.Build.Module, cfg: Config, name: [
     return exe;
 }
 
-pub fn runExample(b: *std.Build, sdl3: *std.Build.Module, cfg: Config) !void {
+pub fn runExample(b: *std.Build, sdl3: *std.Build.Module, cfg: Config, options: ExampleOptions) !void {
     const run_example: ?[]const u8 = b.option([]const u8, "example", "The example name for running an example") orelse null;
     const run = b.step("run", "Run an example with -Dexample=<example_name> option");
     if (run_example) |example| {
-        const run_art = b.addRunArtifact(try setupExample(b, sdl3, cfg, example));
-        run_art.step.dependOn(b.getInstallStep());
-        run.dependOn(&run_art.step);
+        var can_run = true;
+        // TODO unhardcode if we will need more extension-specific examples
+        if (std.mem.eql(u8, example, "net")) {
+            can_run = options.ext_net;
+        }
+        if (std.mem.eql(u8, example, "ttf")) {
+            can_run = options.ext_ttf;
+        }
+
+        if (can_run) {
+            const run_art = b.addRunArtifact(try setupExample(b, sdl3, cfg, example));
+            run_art.step.dependOn(b.getInstallStep());
+            run.dependOn(&run_art.step);
+        }
     }
 }
 
-pub fn setupExamples(b: *std.Build, sdl3: *std.Build.Module, cfg: Config) !*std.Build.Step {
+pub fn setupExamples(b: *std.Build, sdl3: *std.Build.Module, cfg: Config, options: ExampleOptions) !*std.Build.Step {
     const exp = b.step("examples", "Build all examples");
     const examples_dir = b.path("examples");
     var dir = (try std.fs.openDirAbsolute(examples_dir.getPath(b), .{ .iterate = true }));
@@ -262,7 +219,19 @@ pub fn setupExamples(b: *std.Build, sdl3: *std.Build.Module, cfg: Config) !*std.
     defer dir_iterator.deinit();
     while (try dir_iterator.next()) |file| {
         if (file.kind == .file and std.mem.endsWith(u8, file.basename, ".zig")) {
-            _ = try setupExample(b, sdl3, cfg, file.basename[0 .. file.basename.len - 4]);
+            const name = file.basename[0 .. file.basename.len - 4];
+            var build_example = true;
+            // TODO unhardcode if we will need more extension-specific examples
+            if (std.mem.eql(u8, name, "net")) {
+                build_example = options.ext_net;
+            }
+            if (std.mem.eql(u8, name, "ttf")) {
+                build_example = options.ext_ttf;
+            }
+
+            if (build_example) {
+                _ = try setupExample(b, sdl3, cfg, name);
+            }
         }
     }
     exp.dependOn(b.getInstallStep());

@@ -12,6 +12,24 @@
             .hash = "N-V-__8AAP6WIgI4b7FYvyJ6F7gg38lmxqvHSQPGyTlGuFuT",
             .lazy = true,
         },
+        .sdl_net = .{
+            .url = "git+https://github.com/libsdl-org/SDL_net.git#8f5d9df8e42eb31e68aa3aed74ba2ab380e3001e",
+            .hash = "N-V-__8AAK74BwCyuisw6wdXWDDg8sXuHJd_tPk1VKxLTUBK",
+            .lazy = true,
+        },
+        .sdl_ttf = .{
+            .url = "git+https://github.com/libsdl-org/SDL_ttf#release-3.2.2",
+            .hash = "N-V-__8AAF2JgAA_Y5Qzm3b226N8y7ivM-qFVpCo9NkbfO8Y",
+            .lazy = true,
+        },
+        .harfbuzz = .{
+            .url = "git+https://github.com/allyourcodebase/harfbuzz#6bb522d22cee0ce1d1446bd59fa5b0417f25303e",
+            .hash = "harfbuzz-8.5.0-Ip1VAqCZAADRh-K2AVujG0N3VAal-AKwkZrvlYOaloyB",
+        },
+        .freetype = .{
+            .url = "git+https://github.com/allyourcodebase/freetype.git#9d847affbd224cf6a7303ad6d98715e3675ef78c",
+            .hash = "freetype-2.13.3-C3-WdeyJAAD9z8BeYYQ8N3gNlPI9NvHRxg5039S5vhz7",
+        },
     },
     .paths = .{
         "build.zig",
@@ -20,6 +38,7 @@
         "src",
         "template",
         "bindings.yaml",
+        "build",
         "generate.zig",
         "LICENSE",
         "main_callbacks.c",
