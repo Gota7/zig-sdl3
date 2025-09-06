@@ -161,13 +161,30 @@ pub fn event(
 ) !sdl3.AppResult {
     switch (curr_event) {
         .key_down => |key| {
-            if (!key.repeat)
+            if (!key.repeat) {
+                var changed = false;
                 if (key.key) |val| switch (val) {
-                    .left => app_state.use_wireframe_mode = !app_state.use_wireframe_mode,
-                    .down => app_state.use_small_viewport = !app_state.use_small_viewport,
-                    .right => app_state.use_scissor_rect = !app_state.use_scissor_rect,
+                    .left => {
+                        app_state.use_wireframe_mode = !app_state.use_wireframe_mode;
+                        changed = true;
+                    },
+                    .down => {
+                        app_state.use_small_viewport = !app_state.use_small_viewport;
+                        changed = true;
+                    },
+                    .right => {
+                        app_state.use_scissor_rect = !app_state.use_scissor_rect;
+                        changed = true;
+                    },
                     else => {},
                 };
+                if (changed) {
+                    try sdl3.log.log(
+                        "State: {{Wireframe: {any}, SmallViewport: {any}, ScissorRect: {any}}}",
+                        .{ app_state.use_wireframe_mode, app_state.use_small_viewport, app_state.use_scissor_rect },
+                    );
+                }
+            }
         },
         .terminating => return .success,
         .quit => return .success,
