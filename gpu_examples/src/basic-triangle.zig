@@ -92,7 +92,7 @@ pub fn init(
         .target_info = .{
             .color_target_descriptions = &.{
                 .{
-                    .format = device.getSwapchainTextureFormat(window),
+                    .format = try device.getSwapchainTextureFormat(window),
                 },
             },
         },
