@@ -13,10 +13,10 @@ pub const WinMainCRTStartup = void;
 /// Allocator we will use.
 const allocator = std.heap.smp_allocator;
 
-const vert_shader_source = @embedFile("texturedQuad.vert");
-const vert_shader_name = "Textured Quad";
-const frag_shader_source = @embedFile("texturedQuad.frag");
-const frag_shader_name = "Textured Quad";
+const vert_shader_source = @embedFile("texturedQuadWithMatrix.vert");
+const vert_shader_name = "Textured Quad With Matrix";
+const frag_shader_source = @embedFile("texturedQuadWithMultiplyColor.frag");
+const frag_shader_name = "Textured Quad With Multiply Color";
 
 const ravioli_bmp = @embedFile("images/ravioli.bmp");
 
@@ -29,10 +29,10 @@ const PositionTextureVertex = packed struct {
 };
 
 const vertices = [_]PositionTextureVertex{
-    .{ .position = .{ -1, 1, 0 }, .tex_coord = .{ 0, 0 } },
-    .{ .position = .{ 1, 1, 0 }, .tex_coord = .{ 4, 0 } },
-    .{ .position = .{ 1, -1, 0 }, .tex_coord = .{ 4, 4 } },
-    .{ .position = .{ -1, -1, 0 }, .tex_coord = .{ 0, 4 } },
+    .{ .position = .{ -0.5, -0.5, 0 }, .tex_coord = .{ 0, 0 } },
+    .{ .position = .{ 0.5, -0.5, 0 }, .tex_coord = .{ 1, 0 } },
+    .{ .position = .{ 0.5, 0.5, 0 }, .tex_coord = .{ 1, 1 } },
+    .{ .position = .{ -0.5, 0.5, 0 }, .tex_coord = .{ 0, 1 } },
 };
 const vertices_bytes = std.mem.asBytes(&vertices);
 
@@ -46,13 +46,8 @@ const indices = [_]u16{
 };
 const indices_bytes = std.mem.asBytes(&indices);
 
-const sampler_names = [_][]const u8{
-    "PointClamp",
-    "PointWrap",
-    "LinearClamp",
-    "LinearWrap",
-    "AnisotropicClamp",
-    "AnisotropicWrap",
+const FragMultiplyUniform = packed struct {
+    data: @Vector(4, f32),
 };
 
 const AppState = struct {
@@ -62,8 +57,55 @@ const AppState = struct {
     vertex_buffer: sdl3.gpu.Buffer,
     index_buffer: sdl3.gpu.Buffer,
     texture: sdl3.gpu.Texture,
-    samplers: [sampler_names.len]sdl3.gpu.Sampler,
-    curr_sampler: usize = 0,
+    sampler: sdl3.gpu.Sampler,
+};
+
+const Mat4 = packed struct {
+    c0: @Vector(4, f32),
+    c1: @Vector(4, f32),
+    c2: @Vector(4, f32),
+    c3: @Vector(4, f32),
+
+    pub fn mul(a: Mat4, b: Mat4) Mat4 {
+        const ar0 = a.row(0);
+        const ar1 = a.row(1);
+        const ar2 = a.row(2);
+        const ar3 = a.row(3);
+        return .{
+            .c0 = .{ @reduce(.Add, ar0 * b.c0), @reduce(.Add, ar1 * b.c0), @reduce(.Add, ar2 * b.c0), @reduce(.Add, ar3 * b.c0) },
+            .c1 = .{ @reduce(.Add, ar0 * b.c1), @reduce(.Add, ar1 * b.c1), @reduce(.Add, ar2 * b.c1), @reduce(.Add, ar3 * b.c1) },
+            .c2 = .{ @reduce(.Add, ar0 * b.c2), @reduce(.Add, ar1 * b.c2), @reduce(.Add, ar2 * b.c2), @reduce(.Add, ar3 * b.c2) },
+            .c3 = .{ @reduce(.Add, ar0 * b.c3), @reduce(.Add, ar1 * b.c3), @reduce(.Add, ar2 * b.c3), @reduce(.Add, ar3 * b.c3) },
+        };
+    }
+
+    pub fn rotationZ(radians: f32) Mat4 {
+        return .{
+            .c0 = .{ @cos(radians), @sin(radians), 0, 0 },
+            .c1 = .{ -@sin(radians), @cos(radians), 0, 0 },
+            .c2 = .{ 0, 0, 1, 0 },
+            .c3 = .{ 0, 0, 0, 1 },
+        };
+    }
+
+    pub fn row(mat: Mat4, ind: comptime_int) @Vector(4, f32) {
+        return switch (ind) {
+            0 => .{ mat.c0[0], mat.c1[0], mat.c2[0], mat.c3[0] },
+            1 => .{ mat.c0[1], mat.c1[1], mat.c2[1], mat.c3[1] },
+            2 => .{ mat.c0[2], mat.c1[2], mat.c2[2], mat.c3[2] },
+            3 => .{ mat.c0[3], mat.c1[3], mat.c2[3], mat.c3[3] },
+            else => @compileError("Invalid row number"),
+        };
+    }
+
+    pub fn translation(amount: @Vector(3, f32)) Mat4 {
+        return .{
+            .c0 = .{ 1, 0, 0, 0 },
+            .c1 = .{ 0, 1, 0, 0 },
+            .c2 = .{ 0, 0, 1, 0 },
+            .c3 = .{ amount[0], amount[1], amount[2], 1 },
+        };
+    }
 };
 
 fn loadGraphicsShader(
@@ -116,7 +158,7 @@ pub fn init(
     errdefer device.deinit();
 
     // Make our demo window.
-    const window = try sdl3.video.Window.init("Basic Vertex Buffer", window_width, window_height, .{});
+    const window = try sdl3.video.Window.init("Textured Animated Quad", window_width, window_height, .{});
     errdefer window.deinit();
     try device.claimWindow(window);
 
@@ -130,6 +172,15 @@ pub fn init(
             .color_target_descriptions = &.{
                 .{
                     .format = try device.getSwapchainTextureFormat(window),
+                    .blend_state = .{
+                        .enable_blend = true,
+                        .alpha_blend = .add,
+                        .color_blend = .add,
+                        .source_color = .src_alpha,
+                        .source_alpha = .src_alpha,
+                        .destination_color = .one_minus_src_alpha,
+                        .destination_alpha = .one_minus_src_alpha,
+                    },
                 },
             },
         },
@@ -162,65 +213,6 @@ pub fn init(
     const pipeline = try device.createGraphicsPipeline(pipeline_create_info);
     errdefer device.releaseGraphicsPipeline(pipeline);
 
-    // Create samplers.
-    var samplers: [sampler_names.len]sdl3.gpu.Sampler = undefined;
-    samplers[0] = try device.createSampler(.{
-        .min_filter = .nearest,
-        .mag_filter = .nearest,
-        .mipmap_mode = .nearest,
-        .address_mode_u = .clamp_to_edge,
-        .address_mode_v = .clamp_to_edge,
-        .address_mode_w = .clamp_to_edge,
-    });
-    errdefer device.releaseSampler(samplers[0]);
-    samplers[1] = try device.createSampler(.{
-        .min_filter = .nearest,
-        .mag_filter = .nearest,
-        .mipmap_mode = .nearest,
-        .address_mode_u = .repeat,
-        .address_mode_v = .repeat,
-        .address_mode_w = .repeat,
-    });
-    errdefer device.releaseSampler(samplers[1]);
-    samplers[2] = try device.createSampler(.{
-        .min_filter = .linear,
-        .mag_filter = .linear,
-        .mipmap_mode = .linear,
-        .address_mode_u = .clamp_to_edge,
-        .address_mode_v = .clamp_to_edge,
-        .address_mode_w = .clamp_to_edge,
-    });
-    errdefer device.releaseSampler(samplers[2]);
-    samplers[3] = try device.createSampler(.{
-        .min_filter = .linear,
-        .mag_filter = .linear,
-        .mipmap_mode = .linear,
-        .address_mode_u = .repeat,
-        .address_mode_v = .repeat,
-        .address_mode_w = .repeat,
-    });
-    errdefer device.releaseSampler(samplers[3]);
-    samplers[4] = try device.createSampler(.{
-        .min_filter = .linear,
-        .mag_filter = .linear,
-        .mipmap_mode = .linear,
-        .address_mode_u = .clamp_to_edge,
-        .address_mode_v = .clamp_to_edge,
-        .address_mode_w = .clamp_to_edge,
-        .max_anisotropy = 4,
-    });
-    errdefer device.releaseSampler(samplers[4]);
-    samplers[5] = try device.createSampler(.{
-        .min_filter = .linear,
-        .mag_filter = .linear,
-        .mipmap_mode = .linear,
-        .address_mode_u = .repeat,
-        .address_mode_v = .repeat,
-        .address_mode_w = .repeat,
-        .max_anisotropy = 4,
-    });
-    errdefer device.releaseSampler(samplers[5]);
-
     // Prepare vertex buffer.
     const vertex_buffer = try device.createBuffer(.{
         .usage = .{ .vertex = true },
@@ -252,6 +244,17 @@ pub fn init(
         .props = .{ .name = "Ravioli Texture" },
     });
     errdefer device.releaseTexture(texture);
+
+    // Create sampler.
+    const sampler = try device.createSampler(.{
+        .min_filter = .nearest,
+        .mag_filter = .nearest,
+        .mipmap_mode = .nearest,
+        .address_mode_u = .clamp_to_edge,
+        .address_mode_v = .clamp_to_edge,
+        .address_mode_w = .clamp_to_edge,
+    });
+    errdefer device.releaseSampler(sampler);
 
     // Setup transfer buffer.
     const transfer_buffer_vertex_data_off = 0;
@@ -325,12 +328,10 @@ pub fn init(
         .vertex_buffer = vertex_buffer,
         .index_buffer = index_buffer,
         .texture = texture,
-        .samplers = samplers,
+        .sampler = sampler,
     };
 
     // Finish setup.
-    try sdl3.log.log("Press left/right to switch between sampler states", .{});
-    try sdl3.log.log("Sampler state: {s}", .{sampler_names[state.curr_sampler]});
     app_state.* = state;
     return .run;
 }
@@ -338,6 +339,7 @@ pub fn init(
 pub fn iterate(
     app_state: *AppState,
 ) !sdl3.AppResult {
+    const time = @as(f32, @floatFromInt(sdl3.timer.getMillisecondsSinceInit())) / 1000;
 
     // Get command buffer and swapchain texture.
     const cmd_buf = try app_state.device.acquireCommandBuffer();
@@ -367,9 +369,28 @@ pub fn iterate(
         render_pass.bindFragmentSamplers(
             0,
             &.{
-                .{ .texture = app_state.texture, .sampler = app_state.samplers[app_state.curr_sampler] },
+                .{ .texture = app_state.texture, .sampler = app_state.sampler },
             },
         );
+
+        // Top-left.
+        cmd_buf.pushVertexUniformData(0, std.mem.asBytes(&Mat4.translation(.{ -0.5, -0.5, 0 }).mul(Mat4.rotationZ(time))));
+        cmd_buf.pushFragmentUniformData(0, std.mem.asBytes(&FragMultiplyUniform{ .data = .{ 1, 0.5 + @sin(time) * 0.5, 1, 1 } }));
+        render_pass.drawIndexedPrimitives(6, 1, 0, 0, 0);
+
+        // Top-right.
+        cmd_buf.pushVertexUniformData(0, std.mem.asBytes(&Mat4.translation(.{ 0.5, -0.5, 0 }).mul(Mat4.rotationZ((2 * std.math.pi) - time))));
+        cmd_buf.pushFragmentUniformData(0, std.mem.asBytes(&FragMultiplyUniform{ .data = .{ 1, 0.5 + @cos(time) * 0.5, 1, 1 } }));
+        render_pass.drawIndexedPrimitives(6, 1, 0, 0, 0);
+
+        // Bottom-left.
+        cmd_buf.pushVertexUniformData(0, std.mem.asBytes(&Mat4.translation(.{ -0.5, 0.5, 0 }).mul(Mat4.rotationZ(time))));
+        cmd_buf.pushFragmentUniformData(0, std.mem.asBytes(&FragMultiplyUniform{ .data = .{ 1, 0.5 + @sin(time) * 0.2, 1, 1 } }));
+        render_pass.drawIndexedPrimitives(6, 1, 0, 0, 0);
+
+        // Bottom-right.
+        cmd_buf.pushVertexUniformData(0, std.mem.asBytes(&Mat4.translation(.{ 0.5, 0.5, 0 }).mul(Mat4.rotationZ(time))));
+        cmd_buf.pushFragmentUniformData(0, std.mem.asBytes(&FragMultiplyUniform{ .data = .{ 1, 0.5 + @cos(time), 1, 1 } }));
         render_pass.drawIndexedPrimitives(6, 1, 0, 0, 0);
     }
 
@@ -383,30 +404,8 @@ pub fn event(
     app_state: *AppState,
     curr_event: sdl3.events.Event,
 ) !sdl3.AppResult {
+    _ = app_state;
     switch (curr_event) {
-        .key_down => |key| {
-            if (!key.repeat) {
-                var changed = false;
-                if (key.key) |val| switch (val) {
-                    .left => {
-                        if (app_state.curr_sampler == 0) {
-                            app_state.curr_sampler = sampler_names.len - 1;
-                        } else app_state.curr_sampler -= 1;
-                        changed = true;
-                    },
-                    .right => {
-                        if (app_state.curr_sampler >= sampler_names.len - 1) {
-                            app_state.curr_sampler = 0;
-                        } else app_state.curr_sampler += 1;
-                        changed = true;
-                    },
-                    else => {},
-                };
-                if (changed) {
-                    try sdl3.log.log("Sampler state: {s}", .{sampler_names[app_state.curr_sampler]});
-                }
-            }
-        },
         .terminating => return .success,
         .quit => return .success,
         else => {},
@@ -420,8 +419,7 @@ pub fn quit(
 ) void {
     _ = result;
     if (app_state) |val| {
-        for (val.samplers) |sampler|
-            val.device.releaseSampler(sampler);
+        val.device.releaseSampler(val.sampler);
         val.device.releaseTexture(val.texture);
         val.device.releaseBuffer(val.index_buffer);
         val.device.releaseBuffer(val.vertex_buffer);
