@@ -4150,7 +4150,7 @@ pub const StorageBufferReadWriteBinding = extern struct {
     /// Must have been created with `gpu.BufferUsageFlags.compute_storage_write`.
     buffer: Buffer,
     /// If true, cycles the buffer if it is already bound.
-    cycle: bool,
+    cycle: bool = false,
     _1: u8 = 0,
     _2: u8 = 0,
     _3: u8 = 0,
@@ -4173,11 +4173,11 @@ pub const StorageTextureReadWriteBinding = extern struct {
     /// The texture to bind. Must have been created with `gpu.TextureUsageFlags.compute_storage_write` or `gpu.TextureUsageFlags.compute_storage_simultaneous_read_write`.
     texture: Texture,
     /// The mip level index to bind.
-    mip_level: u32,
+    mip_level: u32 = 0,
     /// The layer index to bind.
-    layer: u32,
+    layer: u32 = 0,
     /// If true, cycles the buffer if it is already bound.
-    cycle: bool,
+    cycle: bool = false,
     _1: u8 = 0,
     _2: u8 = 0,
     _3: u8 = 0,

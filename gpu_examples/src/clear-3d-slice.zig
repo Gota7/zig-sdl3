@@ -16,6 +16,9 @@ const allocator = std.heap.smp_allocator;
 const target_width = 64;
 const target_height = 64;
 
+const window_width = 640;
+const window_height = 480;
+
 const AppState = struct {
     device: sdl3.gpu.Device,
     window: sdl3.video.Window,
@@ -39,7 +42,7 @@ pub fn init(
     errdefer device.deinit();
 
     // Make our demo window.
-    const window = try sdl3.video.Window.init("Clear 3d Slice", 640, 480, .{ .resizable = true });
+    const window = try sdl3.video.Window.init("Clear 3d Slice", window_width, window_height, .{ .resizable = true });
     errdefer window.deinit();
     try device.claimWindow(window);
 

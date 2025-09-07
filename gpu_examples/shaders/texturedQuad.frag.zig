@@ -13,7 +13,7 @@ extern var color_out: @Vector(4, f32) addrspace(.output);
 ///
 /// ## Return Value
 /// Returns the sampled color value.
-pub fn sampler2d(
+fn sampler2d(
     comptime set: u32,
     comptime bind: u32,
     uv: @Vector(2, f32),

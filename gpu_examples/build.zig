@@ -12,7 +12,9 @@ fn setupShader(
     name: []const u8,
     format: ShaderFormat,
 ) !void {
-    switch (format) {
+    // Compute shaders not possible for zig atm. See `shaders/basic-compute.zig` for more info.
+    const actual_format = if (format == .zig and std.mem.endsWith(u8, name, ".comp")) .glsl else format;
+    switch (actual_format) {
         .glsl => {
             const glslang = b.findProgram(&.{"glslang"}, &.{}) catch @panic("glslang not found, can not compile GLSL shaders");
             const glslang_cmd = b.addSystemCommand(&.{ glslang, "-V100", "-e", "main", "-S" });
