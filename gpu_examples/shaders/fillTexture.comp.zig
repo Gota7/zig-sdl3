@@ -12,7 +12,7 @@ fn store2d(
     asm volatile (
         \\%float          = OpTypeFloat 32
         \\%v4float        = OpTypeVector %float 4
-        \\%img_type       = OpTypeImage %float 2D 0 0 0 2 Rgba32f
+        \\%img_type       = OpTypeImage %float 2D 0 0 0 2 Rgba8
         \\%img_ptr        = OpTypePointer UniformConstant %img_type
         \\%img            = OpVariable %img_ptr UniformConstant
         \\                  OpDecorate %img DescriptorSet $set

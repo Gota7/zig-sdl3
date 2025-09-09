@@ -13,12 +13,13 @@ fn setupShader(
     format: ShaderFormat,
 ) !void {
     // Compute shaders not possible for zig atm. See `shaders/basic-compute.zig` for more info.
-    const actual_format = if (format == .zig and std.mem.endsWith(u8, name, ".comp")) .glsl else format;
+    const suffix = name[std.mem.lastIndexOf(u8, name, ".").? + 1 ..];
+    const actual_format = if (format == .zig and std.mem.eql(u8, suffix, "comp")) .glsl else format;
     switch (actual_format) {
         .glsl => {
             const glslang = b.findProgram(&.{"glslang"}, &.{}) catch @panic("glslang not found, can not compile GLSL shaders");
             const glslang_cmd = b.addSystemCommand(&.{ glslang, "-V100", "-e", "main", "-S" });
-            glslang_cmd.addArg(name[std.mem.lastIndexOf(u8, name, ".").? + 1 ..]);
+            glslang_cmd.addArg(suffix);
             glslang_cmd.addFileArg(b.path(try std.fmt.allocPrint(b.allocator, "shaders/{s}.glsl", .{name})));
             glslang_cmd.addArg("-o");
             const glslang_cmd_out = glslang_cmd.addOutputFileArg(try std.fmt.allocPrint(b.allocator, "{s}.spv", .{name}));
