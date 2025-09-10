@@ -8,9 +8,8 @@ layout(set = 2, binding = 0) uniform uniforms {
 
 void main() {
     ivec2 image_size = imageSize(image_out);
-    vec2 uv = gl_GlobalInvocationID.xy / image_size;
+    vec2 uv = gl_GlobalInvocationID.xy / vec2(image_size);
 
-    vec3 color = vec3(0.5) + (cos((vec3(time) + uv.xyx) + vec3(0, 2, 4)) * 0.5f);
+    vec3 color = vec3(0.5) + (cos((vec3(time) + uv.xyx) + vec3(0, 2, 4)) * 0.5);
     imageStore(image_out, ivec2(gl_GlobalInvocationID.xy), vec4(color, 1));
-    // imageStore(image_out, ivec2(gl_GlobalInvocationID.xy), vec4(1, 0, 1, 1));
 }

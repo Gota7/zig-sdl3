@@ -1,5 +1,3 @@
-// TODO: FIGURE OUT WHY THE COMPUTE PIPELINE STOPS EXISTING AFTER A FEW FRAMES?
-
 const options = @import("options");
 const sdl3 = @import("sdl3");
 const std = @import("std");
@@ -70,13 +68,13 @@ pub fn init(
     errdefer device.deinit();
 
     // Make our demo window.
-    const window = try sdl3.video.Window.init("Clear 3d Slice", window_width, window_height, .{ .resizable = true });
+    const window = try sdl3.video.Window.init("Compute Uniforms", window_width, window_height, .{});
     errdefer window.deinit();
     try device.claimWindow(window);
 
     // Create compute pipeline.
     const gradient_texture_pipeline_result = try loadComputeShader(device, comp_shader_name, comp_shader_source);
-    defer device.releaseComputePipeline(gradient_texture_pipeline_result.pipeline);
+    errdefer device.releaseComputePipeline(gradient_texture_pipeline_result.pipeline);
 
     // Prepare texture.
     const gradient_render_texture = try device.createTexture(.{
@@ -122,7 +120,7 @@ pub fn iterate(
             );
             defer compute_pass.end();
             compute_pass.bindPipeline(app_state.gradient_render_pipeline);
-            cmd_buf.pushComputeUniformData(0, std.mem.asBytes(&@as(f32, @floatFromInt(sdl3.timer.getMillisecondsSinceInit() / 1000))));
+            cmd_buf.pushComputeUniformData(0, std.mem.asBytes(&(@as(f32, @floatFromInt(sdl3.timer.getMillisecondsSinceInit())) / 1000)));
             compute_pass.dispatch(
                 swapchain_texture.width / app_state.gradient_render_pipeline_metadata.threadcount_x,
                 swapchain_texture.height / app_state.gradient_render_pipeline_metadata.threadcount_y,
