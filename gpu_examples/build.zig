@@ -4,6 +4,7 @@ const ShaderFormat = enum {
     glsl,
     hlsl,
     zig,
+    hlsl_runtime,
 };
 
 fn setupShader(
@@ -14,19 +15,21 @@ fn setupShader(
 ) !void {
     // Compute shaders not possible for zig atm. See `shaders/basic-compute.zig` for more info.
     const suffix = name[std.mem.lastIndexOf(u8, name, ".").? + 1 ..];
-    const actual_format = if (format == .zig and std.mem.eql(u8, suffix, "comp")) .glsl else format;
+    const actual_format = if (format == .zig and std.mem.eql(u8, suffix, "comp")) .hlsl else format;
     switch (actual_format) {
-        .glsl => {
+        .glsl, .hlsl => {
             const glslang = b.findProgram(&.{"glslang"}, &.{}) catch @panic("glslang not found, can not compile GLSL shaders");
             const glslang_cmd = b.addSystemCommand(&.{ glslang, "-V100", "-e", "main", "-S" });
             glslang_cmd.addArg(suffix);
-            glslang_cmd.addFileArg(b.path(try std.fmt.allocPrint(b.allocator, "shaders/{s}.glsl", .{name})));
+            if (actual_format == .hlsl)
+                glslang_cmd.addArg("-D");
+            glslang_cmd.addFileArg(b.path(try std.fmt.allocPrint(b.allocator, "shaders/{s}.{s}", .{ name, if (actual_format == .glsl) "glsl" else "hlsl" })));
             glslang_cmd.addArg("-o");
             const glslang_cmd_out = glslang_cmd.addOutputFileArg(try std.fmt.allocPrint(b.allocator, "{s}.spv", .{name}));
 
             module.addAnonymousImport(name, .{ .root_source_file = glslang_cmd_out });
         },
-        .hlsl => module.addAnonymousImport(name, .{ .root_source_file = b.path(try std.fmt.allocPrint(b.allocator, "shaders/{s}.hlsl", .{name})) }),
+        .hlsl_runtime => module.addAnonymousImport(name, .{ .root_source_file = b.path(try std.fmt.allocPrint(b.allocator, "shaders/{s}.hlsl", .{name})) }),
         .zig => {
             const obj = b.addObject(.{
                 .name = name,
@@ -88,6 +91,7 @@ fn buildExample(
                 .glsl => ".glsl",
                 .hlsl => ".hlsl",
                 .zig => ".zig",
+                .hlsl_runtime => ".hlsl",
             };
             if (!std.mem.endsWith(u8, file.basename, extension))
                 continue;
@@ -154,7 +158,7 @@ pub fn build(b: *std.Build) !void {
     const options = b.addOptions();
 
     const format = b.option(ShaderFormat, "shader_format", "Shader format to use") orelse .zig;
-    options.addOption(bool, "spirv", format != .hlsl);
+    options.addOption(bool, "spirv", format != .hlsl_runtime);
     options.addOption(bool, "gpu_debug", b.option(bool, "gpu_debug", "Enable GPU debugging functionality") orelse false);
     try setupExamples(b, sdl3_mod, format, options, target, optimize);
     try runExample(b, sdl3_mod, format, options, target, optimize);
