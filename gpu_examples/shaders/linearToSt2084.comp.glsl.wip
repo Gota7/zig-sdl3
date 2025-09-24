@@ -1,0 +1,27 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0) uniform image2D image_in;
+layout(set = 1, binding = 0, rgba8) uniform image2D image_out;
+
+vec3 normalizeHdrSceneValue(vec3 hdrSceneValue, vec3 paperWhiteNits) {
+    return (hdrSceneValue * paperWhiteNits) / vec3(10000);
+}
+
+vec3 LinearToST2084(vec3 normalizedLinearValue)
+{
+    // return pow((0.8359375f.xxx + (pow(abs(normalizedLinearValue), 0.1593017578125f.xxx) * 18.8515625f)) / (1.0f.xxx + (pow(abs(normalizedLinearValue), 0.1593017578125f.xxx) * 18.6875f)), 78.84375f.xxx);
+}
+
+vec4 convertToHdr10(float4 hdrSceneValue, float paperWhiteNits) {
+    // float3 rec2020 = mul(float3x3(float3(0.6274039745330810546875f, 0.329281985759735107421875f, 0.043313600122928619384765625f), float3(0.06909699738025665283203125f, 0.919539988040924072265625f, 0.0113612003624439239501953125f), float3(0.01639159955084323883056640625f, 0.0880132019519805908203125f, 0.895595014095306396484375f)), hdrSceneValue.xyz);
+    // float3 normalizedLinearValue = NormalizeHDRSceneValue(rec2020, paperWhiteNits);
+    // float3 HDR10 = LinearToST2084(normalizedLinearValue);
+    // return float4(HDR10, hdrSceneValue.w);
+}
+
+void main() {
+    ivec2 coords = ivec2(gl_GlobalInvocationID.xy);
+    vec4 in_pixel = imageLoad(image_in, coords);
+    imageStore(image_out, coords, convertToHdr10(in_pixel, 200));
+}

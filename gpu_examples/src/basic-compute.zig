@@ -308,8 +308,9 @@ pub fn quit(
         val.device.releaseTexture(val.texture);
         val.device.releaseBuffer(val.vertex_buffer);
         val.device.releaseGraphicsPipeline(val.draw_pipeline);
-        val.device.deinit();
+        val.device.releaseWindow(val.window);
         val.window.deinit();
+        val.device.deinit();
         allocator.destroy(val);
     }
 }

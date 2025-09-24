@@ -205,8 +205,9 @@ pub fn quit(
     if (app_state) |val| {
         val.device.releaseGraphicsPipeline(val.fill_pipeline);
         val.device.releaseGraphicsPipeline(val.line_pipeline);
-        val.device.deinit();
+        val.device.releaseWindow(val.window);
         val.window.deinit();
+        val.device.deinit();
         allocator.destroy(val);
     }
 }

@@ -237,8 +237,9 @@ pub fn quit(
     if (app_state) |val| {
         val.device.releaseBuffer(val.vertex_buffer);
         val.device.releaseGraphicsPipeline(val.pipeline);
-        val.device.deinit();
+        val.device.releaseWindow(val.window);
         val.window.deinit();
+        val.device.deinit();
         allocator.destroy(val);
     }
 }

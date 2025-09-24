@@ -117,9 +117,11 @@ pub fn quit(
 ) void {
     _ = result;
     if (app_state) |val| {
-        val.device.deinit();
+        val.device.releaseWindow(val.window1);
+        val.device.releaseWindow(val.window2);
         val.window1.deinit();
         val.window2.deinit();
+        val.device.deinit();
         allocator.destroy(val);
     }
 }

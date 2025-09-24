@@ -230,7 +230,7 @@ pub fn init(
     // Load the image.
     const image_data = try loadImage(ravioli_bmp);
     defer image_data.deinit();
-    const image_bytes = image_data.getPixels().?[0 .. image_data.getWidth() * image_data.getHeight() * 4];
+    const image_bytes = image_data.getPixels().?[0 .. image_data.getWidth() * image_data.getHeight() * @sizeOf(u8) * 4];
 
     // Create texture.
     const texture = try device.createTexture(.{
@@ -424,8 +424,9 @@ pub fn quit(
         val.device.releaseBuffer(val.index_buffer);
         val.device.releaseBuffer(val.vertex_buffer);
         val.device.releaseGraphicsPipeline(val.pipeline);
-        val.device.deinit();
+        val.device.releaseWindow(val.window);
         val.window.deinit();
+        val.device.deinit();
         allocator.destroy(val);
     }
 }
