@@ -15,8 +15,8 @@ const allocator = std.heap.smp_allocator;
 
 const vert_shader_source = @embedFile("texturedQuad.vert");
 const vert_shader_name = "Textured Quad";
-const frag_shader_source = @embedFile("texturedQuad.frag");
-const frag_shader_name = "Textured Quad";
+const frag_shader_source = @embedFile("texturedQuadArray.frag");
+const frag_shader_name = "Textured Quad Array";
 
 const ravioli_bmp = @embedFile("images/ravioli.bmp");
 const ravioli_inverted_bmp = @embedFile("images/ravioliInverted.bmp");
@@ -31,14 +31,9 @@ const PositionTextureVertex = packed struct {
 
 const vertices = [_]PositionTextureVertex{
     .{ .position = .{ -1, 1, 0 }, .tex_coord = .{ 0, 0 } },
-    .{ .position = .{ 0, 1, 0 }, .tex_coord = .{ 1, 0 } },
-    .{ .position = .{ 0, -1, 0 }, .tex_coord = .{ 1, 1 } },
-    .{ .position = .{ -1, -1, 0 }, .tex_coord = .{ 0, 1 } },
-
-    .{ .position = .{ 0, 1, 0 }, .tex_coord = .{ 0, 0 } },
     .{ .position = .{ 1, 1, 0 }, .tex_coord = .{ 1, 0 } },
     .{ .position = .{ 1, -1, 0 }, .tex_coord = .{ 1, 1 } },
-    .{ .position = .{ 0, -1, 0 }, .tex_coord = .{ 0, 1 } },
+    .{ .position = .{ -1, -1, 0 }, .tex_coord = .{ 0, 1 } },
 };
 const vertices_bytes = std.mem.asBytes(&vertices);
 
@@ -57,15 +52,9 @@ const AppState = struct {
     window: sdl3.video.Window,
     pipeline: sdl3.gpu.GraphicsPipeline,
     vertex_buffer: sdl3.gpu.Buffer,
-    left_vertex_buffer: sdl3.gpu.Buffer,
-    right_vertex_buffer: sdl3.gpu.Buffer,
     index_buffer: sdl3.gpu.Buffer,
     texture: sdl3.gpu.Texture,
-    left_texture: sdl3.gpu.Texture,
-    right_texture: sdl3.gpu.Texture,
     sampler: sdl3.gpu.Sampler,
-    width: u32,
-    height: u32,
 };
 
 fn loadGraphicsShader(
@@ -118,7 +107,7 @@ pub fn init(
     errdefer device.deinit();
 
     // Make our demo window.
-    const window = try sdl3.video.Window.init("Copy Consistency", window_width, window_height, .{});
+    const window = try sdl3.video.Window.init("Texture 2d Array", window_width, window_height, .{});
     errdefer window.deinit();
     try device.claimWindow(window);
 
@@ -132,13 +121,6 @@ pub fn init(
             .color_target_descriptions = &.{
                 .{
                     .format = try device.getSwapchainTextureFormat(window),
-                    .blend_state = .{
-                        .enable_blend = true,
-                        .source_color = .src_alpha,
-                        .source_alpha = .src_alpha,
-                        .destination_color = .one_minus_src_alpha,
-                        .destination_alpha = .one_minus_src_alpha,
-                    },
                 },
             },
         },
@@ -181,22 +163,12 @@ pub fn init(
         .address_mode_w = .clamp_to_edge,
     });
 
-    // Prepare vertex buffers.
+    // Prepare vertex buffer.
     const vertex_buffer = try device.createBuffer(.{
         .usage = .{ .vertex = true },
-        .size = @sizeOf(PositionTextureVertex) * 4,
+        .size = vertices_bytes.len,
     });
     errdefer device.releaseBuffer(vertex_buffer);
-    const left_vertex_buffer = try device.createBuffer(.{
-        .usage = .{ .vertex = true },
-        .size = @sizeOf(PositionTextureVertex) * 4,
-    });
-    errdefer device.releaseBuffer(left_vertex_buffer);
-    const right_vertex_buffer = try device.createBuffer(.{
-        .usage = .{ .vertex = true },
-        .size = @sizeOf(PositionTextureVertex) * 4,
-    });
-    errdefer device.releaseBuffer(right_vertex_buffer);
 
     // Create the index buffer.
     const index_buffer = try device.createBuffer(.{
@@ -212,47 +184,27 @@ pub fn init(
     const image_data_inverted = try loadImage(ravioli_inverted_bmp);
     defer image_data_inverted.deinit();
     const image_inverted_bytes = image_data_inverted.getPixels().?[0 .. image_data_inverted.getWidth() * image_data_inverted.getHeight() * @sizeOf(u8) * 4];
+    std.debug.assert(image_data.getWidth() == image_data_inverted.getWidth());
+    std.debug.assert(image_data.getHeight() == image_data_inverted.getHeight());
 
-    // Create textures.
+    // Create texture.
     const texture = try device.createTexture(.{
-        .texture_type = .two_dimensional,
+        .texture_type = .two_dimensional_array,
         .format = .r8g8b8a8_unorm,
         .width = @intCast(image_data.getWidth()),
         .height = @intCast(image_data.getHeight()),
-        .layer_count_or_depth = 1,
+        .layer_count_or_depth = 2,
         .num_levels = 1,
         .usage = .{ .sampler = true },
-        .props = .{ .name = "Ravioli Texture" },
+        .props = .{ .name = "Ravioli Textures" },
     });
     errdefer device.releaseTexture(texture);
-    const left_texture = try device.createTexture(.{
-        .texture_type = .two_dimensional,
-        .format = .r8g8b8a8_unorm,
-        .width = @intCast(image_data.getWidth()),
-        .height = @intCast(image_data.getHeight()),
-        .layer_count_or_depth = 1,
-        .num_levels = 1,
-        .usage = .{ .sampler = true },
-        .props = .{ .name = "Ravioli Texture Left" },
-    });
-    errdefer device.releaseTexture(left_texture);
-    const right_texture = try device.createTexture(.{
-        .texture_type = .two_dimensional,
-        .format = .r8g8b8a8_unorm,
-        .width = @intCast(image_data_inverted.getWidth()),
-        .height = @intCast(image_data_inverted.getHeight()),
-        .layer_count_or_depth = 1,
-        .num_levels = 1,
-        .usage = .{ .sampler = true },
-        .props = .{ .name = "Ravioli Texture Right" },
-    });
-    errdefer device.releaseTexture(right_texture);
 
     // Setup transfer buffer.
     const transfer_buffer_vertex_data_off = 0;
     const transfer_buffer_index_data_off = transfer_buffer_vertex_data_off + vertices_bytes.len;
-    const transfer_buffer_left_image_data_off = transfer_buffer_index_data_off + indices_bytes.len;
-    const transfer_buffer_right_image_data_off = transfer_buffer_left_image_data_off + image_bytes.len;
+    const transfer_buffer_image_data_off = transfer_buffer_index_data_off + indices_bytes.len;
+    const transfer_buffer_image_inverted_data_off = transfer_buffer_image_data_off + image_bytes.len;
     const transfer_buffer = try device.createTransferBuffer(.{
         .usage = .upload,
         .size = @intCast(vertices_bytes.len + indices_bytes.len + image_bytes.len + image_inverted_bytes.len),
@@ -263,8 +215,8 @@ pub fn init(
         defer device.unmapTransferBuffer(transfer_buffer);
         @memcpy(transfer_buffer_mapped[transfer_buffer_vertex_data_off .. transfer_buffer_vertex_data_off + vertices_bytes.len], vertices_bytes);
         @memcpy(transfer_buffer_mapped[transfer_buffer_index_data_off .. transfer_buffer_index_data_off + indices_bytes.len], indices_bytes);
-        @memcpy(transfer_buffer_mapped[transfer_buffer_left_image_data_off .. transfer_buffer_left_image_data_off + image_bytes.len], image_bytes);
-        @memcpy(transfer_buffer_mapped[transfer_buffer_right_image_data_off .. transfer_buffer_right_image_data_off + image_inverted_bytes.len], image_inverted_bytes);
+        @memcpy(transfer_buffer_mapped[transfer_buffer_image_data_off .. transfer_buffer_image_data_off + image_bytes.len], image_bytes);
+        @memcpy(transfer_buffer_mapped[transfer_buffer_image_inverted_data_off .. transfer_buffer_image_inverted_data_off + image_inverted_bytes.len], image_inverted_bytes);
     }
 
     // Upload transfer data.
@@ -278,21 +230,9 @@ pub fn init(
                 .offset = transfer_buffer_vertex_data_off,
             },
             .{
-                .buffer = left_vertex_buffer,
+                .buffer = vertex_buffer,
                 .offset = 0,
-                .size = @sizeOf(PositionTextureVertex) * 4,
-            },
-            false,
-        );
-        copy_pass.uploadToBuffer(
-            .{
-                .transfer_buffer = transfer_buffer,
-                .offset = transfer_buffer_vertex_data_off + @sizeOf(PositionTextureVertex) * 4,
-            },
-            .{
-                .buffer = right_vertex_buffer,
-                .offset = 0,
-                .size = @sizeOf(PositionTextureVertex) * 4,
+                .size = vertices_bytes.len,
             },
             false,
         );
@@ -311,10 +251,10 @@ pub fn init(
         copy_pass.uploadToTexture(
             .{
                 .transfer_buffer = transfer_buffer,
-                .offset = transfer_buffer_left_image_data_off,
+                .offset = transfer_buffer_image_data_off,
             },
             .{
-                .texture = left_texture,
+                .texture = texture,
                 .width = @intCast(image_data.getWidth()),
                 .height = @intCast(image_data.getHeight()),
                 .depth = 1,
@@ -324,13 +264,14 @@ pub fn init(
         copy_pass.uploadToTexture(
             .{
                 .transfer_buffer = transfer_buffer,
-                .offset = @intCast(transfer_buffer_right_image_data_off),
+                .offset = @intCast(transfer_buffer_image_inverted_data_off),
             },
             .{
-                .texture = right_texture,
+                .texture = texture,
                 .width = @intCast(image_data_inverted.getWidth()),
                 .height = @intCast(image_data_inverted.getHeight()),
                 .depth = 1,
+                .layer = 1,
             },
             false,
         );
@@ -345,15 +286,9 @@ pub fn init(
         .window = window,
         .pipeline = pipeline,
         .vertex_buffer = vertex_buffer,
-        .left_vertex_buffer = left_vertex_buffer,
-        .right_vertex_buffer = right_vertex_buffer,
         .index_buffer = index_buffer,
         .texture = texture,
-        .left_texture = left_texture,
-        .right_texture = right_texture,
         .sampler = sampler,
-        .width = @intCast(image_data.getWidth()),
-        .height = @intCast(image_data.getHeight()),
     };
 
     // Finish setup.
@@ -370,123 +305,33 @@ pub fn iterate(
     const swapchain_texture = try cmd_buf.waitAndAcquireSwapchainTexture(app_state.window);
     if (swapchain_texture.texture) |texture| {
 
-        // Copy left side resources.
-        {
-            const copy_pass = cmd_buf.beginCopyPass();
-            defer copy_pass.end();
-            copy_pass.bufferToBuffer(
-                .{
-                    .buffer = app_state.left_vertex_buffer,
-                    .offset = 0,
-                },
-                .{
-                    .buffer = app_state.vertex_buffer,
-                    .offset = 0,
-                },
-                @sizeOf(PositionTextureVertex) * 4,
-                false,
-            );
-            copy_pass.textureToTexture(
-                .{
-                    .texture = app_state.left_texture,
-                },
-                .{
-                    .texture = app_state.texture,
-                },
-                app_state.width,
-                app_state.height,
-                1,
-                false,
-            );
-        }
-
-        // Draw the left side.
-        var color_target_info = sdl3.gpu.ColorTargetInfo{
-            .texture = texture,
-            .clear_color = .{ .r = 0, .g = 0, .b = 0, .a = 1 },
-            .load = .clear,
-        };
-        {
-            const render_pass = cmd_buf.beginRenderPass(
-                &.{
-                    color_target_info,
-                },
-                null,
-            );
-            defer render_pass.end();
-            render_pass.bindGraphicsPipeline(app_state.pipeline);
-            render_pass.bindVertexBuffers(
-                0,
-                &.{
-                    .{ .buffer = app_state.vertex_buffer, .offset = 0 },
-                },
-            );
-            render_pass.bindIndexBuffer(
-                .{ .buffer = app_state.index_buffer, .offset = 0 },
-                .indices_16bit,
-            );
-            render_pass.bindFragmentSamplers(0, &.{
+        // Start a render pass if the swapchain texture is available. Make sure to clear it.
+        const render_pass = cmd_buf.beginRenderPass(&.{
+            sdl3.gpu.ColorTargetInfo{
+                .texture = texture,
+                .clear_color = .{ .r = 0, .g = 0, .b = 0, .a = 1 },
+                .load = .clear,
+            },
+        }, null);
+        defer render_pass.end();
+        render_pass.bindGraphicsPipeline(app_state.pipeline);
+        render_pass.bindVertexBuffers(
+            0,
+            &.{
+                .{ .buffer = app_state.vertex_buffer, .offset = 0 },
+            },
+        );
+        render_pass.bindIndexBuffer(
+            .{ .buffer = app_state.index_buffer, .offset = 0 },
+            .indices_16bit,
+        );
+        render_pass.bindFragmentSamplers(
+            0,
+            &.{
                 .{ .texture = app_state.texture, .sampler = app_state.sampler },
-            });
-            render_pass.drawIndexedPrimitives(6, 1, 0, 0, 0);
-        }
-
-        // Copy right side resources.
-        {
-            const copy_pass = cmd_buf.beginCopyPass();
-            defer copy_pass.end();
-            copy_pass.bufferToBuffer(
-                .{
-                    .buffer = app_state.right_vertex_buffer,
-                    .offset = 0,
-                },
-                .{
-                    .buffer = app_state.vertex_buffer,
-                    .offset = 0,
-                },
-                @sizeOf(PositionTextureVertex) * 4,
-                false,
-            );
-            copy_pass.textureToTexture(
-                .{
-                    .texture = app_state.right_texture,
-                },
-                .{
-                    .texture = app_state.texture,
-                },
-                app_state.width,
-                app_state.height,
-                1,
-                false,
-            );
-        }
-
-        // Draw the right side.
-        color_target_info.load = .load;
-        {
-            const render_pass = cmd_buf.beginRenderPass(
-                &.{
-                    color_target_info,
-                },
-                null,
-            );
-            defer render_pass.end();
-            render_pass.bindGraphicsPipeline(app_state.pipeline);
-            render_pass.bindVertexBuffers(
-                0,
-                &.{
-                    .{ .buffer = app_state.vertex_buffer, .offset = 0 },
-                },
-            );
-            render_pass.bindIndexBuffer(
-                .{ .buffer = app_state.index_buffer, .offset = 0 },
-                .indices_16bit,
-            );
-            render_pass.bindFragmentSamplers(0, &.{
-                .{ .texture = app_state.texture, .sampler = app_state.sampler },
-            });
-            render_pass.drawIndexedPrimitives(6, 1, 0, 0, 0);
-        }
+            },
+        );
+        render_pass.drawIndexedPrimitives(6, 1, 0, 0, 0);
     }
 
     // Finally submit the command buffer.
@@ -516,12 +361,8 @@ pub fn quit(
     if (app_state) |val| {
         val.device.releaseSampler(val.sampler);
         val.device.releaseTexture(val.texture);
-        val.device.releaseTexture(val.left_texture);
-        val.device.releaseTexture(val.right_texture);
         val.device.releaseBuffer(val.index_buffer);
         val.device.releaseBuffer(val.vertex_buffer);
-        val.device.releaseBuffer(val.left_vertex_buffer);
-        val.device.releaseBuffer(val.right_vertex_buffer);
         val.device.releaseGraphicsPipeline(val.pipeline);
         val.device.releaseWindow(val.window);
         val.window.deinit();
