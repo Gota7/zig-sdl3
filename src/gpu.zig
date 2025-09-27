@@ -4244,6 +4244,9 @@ pub const SwapchainComposition = enum(c.SDL_GPUSwapchainComposition) {
 pub const Texture = packed struct {
     value: ?*c.SDL_GPUTexture,
 
+    /// A null texture.
+    pub const @"null" = Texture{ .value = null };
+
     // Size tests.
     comptime {
         std.debug.assert(@sizeOf(*c.SDL_GPUTexture) == @sizeOf(Texture));
