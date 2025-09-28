@@ -13,7 +13,7 @@ pub const WinMainCRTStartup = void;
 /// Allocator we will use.
 const allocator = std.heap.smp_allocator;
 
-const ravioli_bmp = @embedFile("images/ravioli.bmp");
+const cube_bmp = @embedFile("images/cube0.bmp");
 
 const window_width = 640;
 const window_height = 480;
@@ -21,7 +21,7 @@ const window_height = 480;
 const AppState = struct {
     device: sdl3.gpu.Device,
     window: sdl3.video.Window,
-    texture: sdl3.gpu.Texture,
+    mipmap_texture: sdl3.gpu.Texture,
     texture_width: u32,
     texture_height: u32,
 };
@@ -51,27 +51,27 @@ pub fn init(
     errdefer device.deinit();
 
     // Make our demo window.
-    const window = try sdl3.video.Window.init("Blit Mirror", window_width, window_height, .{});
+    const window = try sdl3.video.Window.init("Generate Mipmaps", window_width, window_height, .{});
     errdefer window.deinit();
     try device.claimWindow(window);
 
     // Load the image.
-    const image_data = try loadImage(ravioli_bmp);
+    const image_data = try loadImage(cube_bmp);
     defer image_data.deinit();
     const image_bytes = image_data.getPixels().?[0 .. image_data.getWidth() * image_data.getHeight() * @sizeOf(u8) * 4];
 
     // Create texture.
-    const texture = try device.createTexture(.{
+    const mipmap_texture = try device.createTexture(.{
         .texture_type = .two_dimensional,
         .format = .r8g8b8a8_unorm,
         .width = @intCast(image_data.getWidth()),
         .height = @intCast(image_data.getHeight()),
         .layer_count_or_depth = 1,
-        .num_levels = 1,
-        .usage = .{ .sampler = true },
-        .props = .{ .name = "Ravioli Texture" },
+        .num_levels = 3,
+        .usage = .{ .sampler = true, .color_target = true },
+        .props = .{ .name = "Cube Texture" },
     });
-    errdefer device.releaseTexture(texture);
+    errdefer device.releaseTexture(mipmap_texture);
 
     // Setup transfer buffer.
     const transfer_buffer = try device.createTransferBuffer(.{
@@ -96,7 +96,7 @@ pub fn init(
                 .offset = 0,
             },
             .{
-                .texture = texture,
+                .texture = mipmap_texture,
                 .width = @intCast(image_data.getWidth()),
                 .height = @intCast(image_data.getHeight()),
                 .depth = 1,
@@ -104,6 +104,7 @@ pub fn init(
             false,
         );
     }
+    cmd_buf.generateMipmapsForTexture(mipmap_texture);
     try cmd_buf.submit();
 
     // Prepare app state.
@@ -112,7 +113,7 @@ pub fn init(
     state.* = .{
         .device = device,
         .window = window,
-        .texture = texture,
+        .mipmap_texture = mipmap_texture,
         .texture_width = @intCast(image_data.getWidth()),
         .texture_height = @intCast(image_data.getHeight()),
     };
@@ -143,63 +144,19 @@ pub fn iterate(
             defer render_pass.end();
         }
 
-        // Normal.
+        // Blit the smallest mip level.
         cmd_buf.blitTexture(.{
             .source = .{
-                .texture = app_state.texture,
-                .region = .{ .x = 0, .y = 0, .w = app_state.texture_width, .h = app_state.texture_height },
+                .texture = app_state.mipmap_texture,
+                .region = .{ .x = 0, .y = 0, .w = app_state.texture_width / 4, .h = app_state.texture_height / 4 },
+                .mip_level = 2,
             },
             .destination = .{
                 .texture = texture,
-                .region = .{ .x = 0, .y = 0, .w = swapchain_texture.width / 2, .h = swapchain_texture.height / 2 },
+                .region = .{ .x = 0, .y = 0, .w = swapchain_texture.width, .h = swapchain_texture.height },
             },
             .load_op = .do_not_care,
             .filter = .nearest,
-        });
-
-        // Flip horizontal.
-        cmd_buf.blitTexture(.{
-            .source = .{
-                .texture = app_state.texture,
-                .region = .{ .x = 0, .y = 0, .w = app_state.texture_width, .h = app_state.texture_height },
-            },
-            .destination = .{
-                .texture = texture,
-                .region = .{ .x = swapchain_texture.width / 2, .y = 0, .w = swapchain_texture.width / 2, .h = swapchain_texture.height / 2 },
-            },
-            .load_op = .do_not_care,
-            .filter = .nearest,
-            .flip_mode = .{ .horizontal = true },
-        });
-
-        // Flip vertical.
-        cmd_buf.blitTexture(.{
-            .source = .{
-                .texture = app_state.texture,
-                .region = .{ .x = 0, .y = 0, .w = app_state.texture_width, .h = app_state.texture_height },
-            },
-            .destination = .{
-                .texture = texture,
-                .region = .{ .x = 0, .y = swapchain_texture.height / 2, .w = swapchain_texture.width / 2, .h = swapchain_texture.height / 2 },
-            },
-            .load_op = .do_not_care,
-            .filter = .nearest,
-            .flip_mode = .{ .vertical = true },
-        });
-
-        // Flip horizontal and vertical.
-        cmd_buf.blitTexture(.{
-            .source = .{
-                .texture = app_state.texture,
-                .region = .{ .x = 0, .y = 0, .w = app_state.texture_width, .h = app_state.texture_height },
-            },
-            .destination = .{
-                .texture = texture,
-                .region = .{ .x = swapchain_texture.width / 2, .y = swapchain_texture.height / 2, .w = swapchain_texture.width / 2, .h = swapchain_texture.height / 2 },
-            },
-            .load_op = .do_not_care,
-            .filter = .nearest,
-            .flip_mode = .{ .horizontal = true, .vertical = true },
         });
     }
 
@@ -228,7 +185,7 @@ pub fn quit(
 ) void {
     _ = result;
     if (app_state) |val| {
-        val.device.releaseTexture(val.texture);
+        val.device.releaseTexture(val.mipmap_texture);
         val.device.releaseWindow(val.window);
         val.window.deinit();
         val.device.deinit();
