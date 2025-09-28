@@ -209,7 +209,7 @@ pub fn init(
     errdefer device.deinit();
 
     // Make our demo window.
-    const window = try sdl3.video.Window.init("Cubemap", window_width, window_height, .{});
+    const window = try sdl3.video.Window.init("Blit Cube", window_width, window_height, .{});
     errdefer window.deinit();
     try device.claimWindow(window);
 
