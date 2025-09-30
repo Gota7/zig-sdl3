@@ -13,38 +13,13 @@ pub const WinMainCRTStartup = void;
 /// Allocator we will use.
 const allocator = std.heap.smp_allocator;
 
-const vert_shader_source = @embedFile("texturedQuad.vert");
-const vert_shader_name = "Textured Quad";
-const frag_shader_source = @embedFile("texturedQuad.frag");
-const frag_shader_name = "Textured Quad";
+const comp_shader_source = @embedFile("texturedQuad.comp");
+const comp_shader_name = "Textured Quad";
 
 const ravioli_bmp = @embedFile("images/ravioli.bmp");
 
 const window_width = 640;
 const window_height = 480;
-
-const PositionTextureVertex = packed struct {
-    position: @Vector(3, f32),
-    tex_coord: @Vector(2, f32),
-};
-
-const vertices = [_]PositionTextureVertex{
-    .{ .position = .{ -1, 1, 0 }, .tex_coord = .{ 0, 0 } },
-    .{ .position = .{ 1, 1, 0 }, .tex_coord = .{ 4, 0 } },
-    .{ .position = .{ 1, -1, 0 }, .tex_coord = .{ 4, 4 } },
-    .{ .position = .{ -1, -1, 0 }, .tex_coord = .{ 0, 4 } },
-};
-const vertices_bytes = std.mem.asBytes(&vertices);
-
-const indices = [_]u16{
-    0,
-    1,
-    2,
-    0,
-    2,
-    3,
-};
-const indices_bytes = std.mem.asBytes(&indices);
 
 const sampler_names = [_][]const u8{
     "PointClamp",
@@ -58,37 +33,36 @@ const sampler_names = [_][]const u8{
 const AppState = struct {
     device: sdl3.gpu.Device,
     window: sdl3.video.Window,
-    pipeline: sdl3.gpu.GraphicsPipeline,
-    vertex_buffer: sdl3.gpu.Buffer,
-    index_buffer: sdl3.gpu.Buffer,
+    pipeline: sdl3.gpu.ComputePipeline,
+    pipeline_metadata: sdl3.shadercross.ComputePipelineMetadata,
     texture: sdl3.gpu.Texture,
+    write_texture: sdl3.gpu.Texture,
     samplers: [sampler_names.len]sdl3.gpu.Sampler,
     curr_sampler: usize = 0,
 };
 
-fn loadGraphicsShader(
+fn loadComputeShader(
     device: sdl3.gpu.Device,
     name: ?[:0]const u8,
     shader_code: [:0]const u8,
-    stage: sdl3.shadercross.ShaderStage,
-) !sdl3.gpu.Shader {
+) !struct { pipeline: sdl3.gpu.ComputePipeline, metadata: sdl3.shadercross.ComputePipelineMetadata } {
     const spirv_code = if (options.spirv) shader_code else try sdl3.shadercross.compileSpirvFromHlsl(.{
         .defines = null,
         .enable_debug = options.gpu_debug,
         .entry_point = "main",
         .include_dir = null,
         .name = name,
-        .shader_stage = stage,
+        .shader_stage = .compute,
         .source = shader_code,
     });
-    const spirv_metadata = try sdl3.shadercross.reflectGraphicsSpirv(spirv_code);
-    return try sdl3.shadercross.compileGraphicsShaderFromSpirv(device, .{
+    const spirv_metadata = try sdl3.shadercross.reflectComputeSpirv(spirv_code);
+    return .{ .pipeline = try sdl3.shadercross.compileComputePipelineFromSpirv(device, .{
         .bytecode = spirv_code,
         .enable_debug = options.gpu_debug,
         .entry_point = "main",
         .name = name,
-        .shader_stage = stage,
-    }, spirv_metadata);
+        .shader_stage = .compute,
+    }, spirv_metadata), .metadata = spirv_metadata };
 }
 
 pub fn loadImage(
@@ -116,51 +90,42 @@ pub fn init(
     errdefer device.deinit();
 
     // Make our demo window.
-    const window = try sdl3.video.Window.init("Basic Vertex Buffer", window_width, window_height, .{});
+    const window = try sdl3.video.Window.init("Compute Sampler", window_width, window_height, .{});
     errdefer window.deinit();
     try device.claimWindow(window);
 
-    // Prepare pipelines.
-    const vertex_shader = try loadGraphicsShader(device, vert_shader_name, vert_shader_source, .vertex);
-    defer device.releaseShader(vertex_shader);
-    const fragment_shader = try loadGraphicsShader(device, frag_shader_name, frag_shader_source, .fragment);
-    defer device.releaseShader(fragment_shader);
-    const pipeline_create_info = sdl3.gpu.GraphicsPipelineCreateInfo{
-        .target_info = .{
-            .color_target_descriptions = &.{
-                .{
-                    .format = try device.getSwapchainTextureFormat(window),
-                },
-            },
-        },
-        .vertex_shader = vertex_shader,
-        .fragment_shader = fragment_shader,
-        .vertex_input_state = .{
-            .vertex_buffer_descriptions = &.{
-                .{
-                    .slot = 0,
-                    .pitch = @sizeOf(PositionTextureVertex),
-                    .input_rate = .vertex,
-                },
-            },
-            .vertex_attributes = &.{
-                .{
-                    .location = 0,
-                    .buffer_slot = 0,
-                    .format = .f32x3,
-                    .offset = @offsetOf(PositionTextureVertex, "position"),
-                },
-                .{
-                    .location = 1,
-                    .buffer_slot = 0,
-                    .format = .f32x2,
-                    .offset = @offsetOf(PositionTextureVertex, "tex_coord"),
-                },
-            },
-        },
-    };
-    const pipeline = try device.createGraphicsPipeline(pipeline_create_info);
-    errdefer device.releaseGraphicsPipeline(pipeline);
+    // Load the image.
+    const image_data = try loadImage(ravioli_bmp);
+    defer image_data.deinit();
+    const image_bytes = image_data.getPixels().?[0 .. image_data.getWidth() * image_data.getHeight() * @sizeOf(u8) * 4];
+
+    // Create textures.
+    const texture = try device.createTexture(.{
+        .texture_type = .two_dimensional,
+        .format = .r8g8b8a8_unorm,
+        .width = @intCast(image_data.getWidth()),
+        .height = @intCast(image_data.getHeight()),
+        .layer_count_or_depth = 1,
+        .num_levels = 1,
+        .usage = .{ .sampler = true },
+        .props = .{ .name = "Ravioli Texture" },
+    });
+    errdefer device.releaseTexture(texture);
+    const write_texture = try device.createTexture(.{
+        .texture_type = .two_dimensional,
+        .format = .r8g8b8a8_unorm,
+        .width = window_width,
+        .height = window_height,
+        .layer_count_or_depth = 1,
+        .num_levels = 1,
+        .usage = .{ .sampler = true, .compute_storage_write = true },
+        .props = .{ .name = "Ravioli Texture" },
+    });
+    errdefer device.releaseTexture(write_texture);
+
+    // Create pipeline.
+    const pipeline = try loadComputeShader(device, comp_shader_name, comp_shader_source);
+    errdefer device.releaseComputePipeline(pipeline.pipeline);
 
     // Create samplers.
     var samplers: [sampler_names.len]sdl3.gpu.Sampler = undefined;
@@ -221,53 +186,16 @@ pub fn init(
     });
     errdefer device.releaseSampler(samplers[5]);
 
-    // Prepare vertex buffer.
-    const vertex_buffer = try device.createBuffer(.{
-        .usage = .{ .vertex = true },
-        .size = vertices_bytes.len,
-    });
-    errdefer device.releaseBuffer(vertex_buffer);
-
-    // Create the index buffer.
-    const index_buffer = try device.createBuffer(.{
-        .usage = .{ .index = true },
-        .size = indices_bytes.len,
-    });
-    errdefer device.releaseBuffer(index_buffer);
-
-    // Load the image.
-    const image_data = try loadImage(ravioli_bmp);
-    defer image_data.deinit();
-    const image_bytes = image_data.getPixels().?[0 .. image_data.getWidth() * image_data.getHeight() * @sizeOf(u8) * 4];
-
-    // Create texture.
-    const texture = try device.createTexture(.{
-        .texture_type = .two_dimensional,
-        .format = .r8g8b8a8_unorm,
-        .width = @intCast(image_data.getWidth()),
-        .height = @intCast(image_data.getHeight()),
-        .layer_count_or_depth = 1,
-        .num_levels = 1,
-        .usage = .{ .sampler = true },
-        .props = .{ .name = "Ravioli Texture" },
-    });
-    errdefer device.releaseTexture(texture);
-
     // Setup transfer buffer.
-    const transfer_buffer_vertex_data_off = 0;
-    const transfer_buffer_index_data_off = transfer_buffer_vertex_data_off + vertices_bytes.len;
-    const transfer_buffer_image_data_off = transfer_buffer_index_data_off + indices_bytes.len;
     const transfer_buffer = try device.createTransferBuffer(.{
         .usage = .upload,
-        .size = @intCast(vertices_bytes.len + indices_bytes.len + image_bytes.len),
+        .size = @intCast(image_bytes.len),
     });
     defer device.releaseTransferBuffer(transfer_buffer);
     {
         const transfer_buffer_mapped = try device.mapTransferBuffer(transfer_buffer, false);
         defer device.unmapTransferBuffer(transfer_buffer);
-        @memcpy(transfer_buffer_mapped[transfer_buffer_vertex_data_off .. transfer_buffer_vertex_data_off + vertices_bytes.len], vertices_bytes);
-        @memcpy(transfer_buffer_mapped[transfer_buffer_index_data_off .. transfer_buffer_index_data_off + indices_bytes.len], indices_bytes);
-        @memcpy(transfer_buffer_mapped[transfer_buffer_image_data_off .. transfer_buffer_image_data_off + image_bytes.len], image_bytes);
+        @memcpy(transfer_buffer_mapped[0..image_bytes.len], image_bytes);
     }
 
     // Upload transfer data.
@@ -275,34 +203,10 @@ pub fn init(
     {
         const copy_pass = cmd_buf.beginCopyPass();
         defer copy_pass.end();
-        copy_pass.uploadToBuffer(
-            .{
-                .transfer_buffer = transfer_buffer,
-                .offset = transfer_buffer_vertex_data_off,
-            },
-            .{
-                .buffer = vertex_buffer,
-                .offset = 0,
-                .size = vertices_bytes.len,
-            },
-            false,
-        );
-        copy_pass.uploadToBuffer(
-            .{
-                .transfer_buffer = transfer_buffer,
-                .offset = transfer_buffer_index_data_off,
-            },
-            .{
-                .buffer = index_buffer,
-                .offset = 0,
-                .size = indices_bytes.len,
-            },
-            false,
-        );
         copy_pass.uploadToTexture(
             .{
                 .transfer_buffer = transfer_buffer,
-                .offset = transfer_buffer_image_data_off,
+                .offset = 0,
             },
             .{
                 .texture = texture,
@@ -321,10 +225,10 @@ pub fn init(
     state.* = .{
         .device = device,
         .window = window,
-        .pipeline = pipeline,
-        .vertex_buffer = vertex_buffer,
-        .index_buffer = index_buffer,
+        .pipeline = pipeline.pipeline,
+        .pipeline_metadata = pipeline.metadata,
         .texture = texture,
+        .write_texture = write_texture,
         .samplers = samplers,
     };
 
@@ -344,33 +248,44 @@ pub fn iterate(
     const swapchain_texture = try cmd_buf.waitAndAcquireSwapchainTexture(app_state.window);
     if (swapchain_texture.texture) |texture| {
 
-        // Start a render pass if the swapchain texture is available. Make sure to clear it.
-        const render_pass = cmd_buf.beginRenderPass(&.{
-            sdl3.gpu.ColorTargetInfo{
+        // Start a compute pass if the swapchain texture is available.
+        {
+            const compute_pass = cmd_buf.beginComputePass(
+                &.{
+                    .{
+                        .texture = app_state.write_texture,
+                        .cycle = true,
+                    },
+                },
+                &.{},
+            );
+            defer compute_pass.end();
+            compute_pass.bindPipeline(app_state.pipeline);
+            compute_pass.bindSamplers(
+                0,
+                &.{
+                    .{ .texture = app_state.texture, .sampler = app_state.samplers[app_state.curr_sampler] },
+                },
+            );
+            cmd_buf.pushComputeUniformData(0, std.mem.asBytes(&@as(f32, 0.25)));
+            compute_pass.dispatch(
+                swapchain_texture.width / app_state.pipeline_metadata.threadcount_x,
+                swapchain_texture.height / app_state.pipeline_metadata.threadcount_y,
+                app_state.pipeline_metadata.threadcount_z,
+            );
+        }
+        cmd_buf.blitTexture(.{
+            .source = .{
+                .texture = app_state.write_texture,
+                .region = .{ .x = 0, .y = 0, .w = window_width, .h = window_height },
+            },
+            .destination = .{
                 .texture = texture,
-                .clear_color = .{ .r = 0, .g = 0, .b = 0, .a = 1 },
-                .load = .clear,
+                .region = .{ .x = 0, .y = 0, .w = swapchain_texture.width, .h = swapchain_texture.height },
             },
-        }, null);
-        defer render_pass.end();
-        render_pass.bindGraphicsPipeline(app_state.pipeline);
-        render_pass.bindVertexBuffers(
-            0,
-            &.{
-                .{ .buffer = app_state.vertex_buffer, .offset = 0 },
-            },
-        );
-        render_pass.bindIndexBuffer(
-            .{ .buffer = app_state.index_buffer, .offset = 0 },
-            .indices_16bit,
-        );
-        render_pass.bindFragmentSamplers(
-            0,
-            &.{
-                .{ .texture = app_state.texture, .sampler = app_state.samplers[app_state.curr_sampler] },
-            },
-        );
-        render_pass.drawIndexedPrimitives(6, 1, 0, 0, 0);
+            .load_op = .do_not_care,
+            .filter = .nearest,
+        });
     }
 
     // Finally submit the command buffer.
@@ -422,10 +337,9 @@ pub fn quit(
     if (app_state) |val| {
         for (val.samplers) |sampler|
             val.device.releaseSampler(sampler);
+        val.device.releaseTexture(val.write_texture);
         val.device.releaseTexture(val.texture);
-        val.device.releaseBuffer(val.index_buffer);
-        val.device.releaseBuffer(val.vertex_buffer);
-        val.device.releaseGraphicsPipeline(val.pipeline);
+        val.device.releaseComputePipeline(val.pipeline);
         val.device.releaseWindow(val.window);
         val.window.deinit();
         val.device.deinit();

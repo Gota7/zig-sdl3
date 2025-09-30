@@ -13,63 +13,69 @@ pub const WinMainCRTStartup = void;
 /// Allocator we will use.
 const allocator = std.heap.smp_allocator;
 
-const comp_shader_source = @embedFile("fillTexture.comp");
-const comp_shader_name = "Fill Texture";
-const vert_shader_source = @embedFile("texturedQuad.vert");
-const vert_shader_name = "Textured Quad";
-const frag_shader_source = @embedFile("texturedQuad.frag");
-const frag_shader_name = "Textured Quad";
+const vert_shader_source = @embedFile("positionColor.vert");
+const vert_shader_name = "Position Color";
+const frag_shader_source = @embedFile("solidColor.frag");
+const frag_shader_name = "Solid Color";
 
 const window_width = 640;
 const window_height = 480;
 
-const PositionTextureVertex = packed struct {
+const PositionColorVertex = packed struct {
     position: @Vector(3, f32),
-    tex_coord: @Vector(2, f32),
+    color: @Vector(4, u8),
 };
 
-const vertices = [_]PositionTextureVertex{
-    .{ .position = .{ -1, -1, 0 }, .tex_coord = .{ 0, 0 } },
-    .{ .position = .{ 1, -1, 0 }, .tex_coord = .{ 1, 0 } },
-    .{ .position = .{ 1, 1, 0 }, .tex_coord = .{ 1, 1 } },
-    .{ .position = .{ -1, -1, 0 }, .tex_coord = .{ 0, 0 } },
-    .{ .position = .{ 1, 1, 0 }, .tex_coord = .{ 1, 1 } },
-    .{ .position = .{ -1, 1, 0 }, .tex_coord = .{ 0, 1 } },
+const vertices = [_]PositionColorVertex{
+
+    // Indexed indirect.
+    .{ .position = .{ -1, -1, 0 }, .color = .{ 255, 0, 0, 255 } },
+    .{ .position = .{ 1, -1, 0 }, .color = .{ 0, 255, 0, 255 } },
+    .{ .position = .{ 1, 1, 0 }, .color = .{ 0, 0, 255, 255 } },
+    .{ .position = .{ -1, 1, 0 }, .color = .{ 255, 255, 255, 255 } },
+
+    // Indirect 1.
+    .{ .position = .{ 1, -1, 0 }, .color = .{ 0, 255, 0, 255 } },
+    .{ .position = .{ 0, -1, 0 }, .color = .{ 0, 0, 255, 255 } },
+    .{ .position = .{ 0.5, 1, 0 }, .color = .{ 255, 0, 0, 255 } },
+
+    // Indirect 2.
+    .{ .position = .{ -1, -1, 0 }, .color = .{ 0, 255, 0, 255 } },
+    .{ .position = .{ 0, -1, 0 }, .color = .{ 0, 0, 255, 255 } },
+    .{ .position = .{ -0.5, 1, 0 }, .color = .{ 255, 0, 0, 255 } },
 };
 const vertices_bytes = std.mem.asBytes(&vertices);
+
+const indices = [_]u16{
+    0,
+    1,
+    2,
+    0,
+    2,
+    3,
+};
+const indices_bytes = std.mem.asBytes(&indices);
+
+const indexed_draw_command = sdl3.gpu.IndexedIndirectDrawCommand{
+    .num_indices = 6,
+    .num_instances = 1,
+};
+const indexed_draw_command_bytes = std.mem.asBytes(&indexed_draw_command);
+
+const draw_commands = [_]sdl3.gpu.IndirectDrawCommand{
+    .{ .num_vertices = 3, .num_instances = 1, .first_vertex = 4 },
+    .{ .num_vertices = 3, .num_instances = 1, .first_vertex = 7 },
+};
+const draw_commands_bytes = std.mem.asBytes(&draw_commands);
 
 const AppState = struct {
     device: sdl3.gpu.Device,
     window: sdl3.video.Window,
-    draw_pipeline: sdl3.gpu.GraphicsPipeline,
+    pipeline: sdl3.gpu.GraphicsPipeline,
     vertex_buffer: sdl3.gpu.Buffer,
-    texture: sdl3.gpu.Texture,
-    sampler: sdl3.gpu.Sampler,
+    index_buffer: sdl3.gpu.Buffer,
+    draw_buffer: sdl3.gpu.Buffer,
 };
-
-fn loadComputeShader(
-    device: sdl3.gpu.Device,
-    name: ?[:0]const u8,
-    shader_code: [:0]const u8,
-) !struct { pipeline: sdl3.gpu.ComputePipeline, metadata: sdl3.shadercross.ComputePipelineMetadata } {
-    const spirv_code = if (options.spirv) shader_code else try sdl3.shadercross.compileSpirvFromHlsl(.{
-        .defines = null,
-        .enable_debug = options.gpu_debug,
-        .entry_point = "main",
-        .include_dir = null,
-        .name = name,
-        .shader_stage = .compute,
-        .source = shader_code,
-    });
-    const spirv_metadata = try sdl3.shadercross.reflectComputeSpirv(spirv_code);
-    return .{ .pipeline = try sdl3.shadercross.compileComputePipelineFromSpirv(device, .{
-        .bytecode = spirv_code,
-        .enable_debug = options.gpu_debug,
-        .entry_point = "main",
-        .name = name,
-        .shader_stage = .compute,
-    }, spirv_metadata), .metadata = spirv_metadata };
-}
 
 fn loadGraphicsShader(
     device: sdl3.gpu.Device,
@@ -96,6 +102,14 @@ fn loadGraphicsShader(
     }, spirv_metadata);
 }
 
+pub fn loadImage(
+    bmp: []const u8,
+) !sdl3.surface.Surface {
+    const image_data_raw = try sdl3.surface.Surface.initFromBmpIo(try sdl3.io_stream.Stream.initFromConstMem(bmp), true);
+    defer image_data_raw.deinit();
+    return image_data_raw.convertFormat(sdl3.pixels.Format.packed_abgr_8_8_8_8);
+}
+
 pub fn init(
     app_state: *?*AppState,
     args: [][*:0]u8,
@@ -113,7 +127,7 @@ pub fn init(
     errdefer device.deinit();
 
     // Make our demo window.
-    const window = try sdl3.video.Window.init("Basic Compute", window_width, window_height, .{});
+    const window = try sdl3.video.Window.init("Draw Indirect", window_width, window_height, .{});
     errdefer window.deinit();
     try device.claimWindow(window);
 
@@ -136,7 +150,7 @@ pub fn init(
             .vertex_buffer_descriptions = &.{
                 .{
                     .slot = 0,
-                    .pitch = @sizeOf(PositionTextureVertex),
+                    .pitch = @sizeOf(PositionColorVertex),
                     .input_rate = .vertex,
                 },
             },
@@ -145,35 +159,19 @@ pub fn init(
                     .location = 0,
                     .buffer_slot = 0,
                     .format = .f32x3,
-                    .offset = @offsetOf(PositionTextureVertex, "position"),
+                    .offset = @offsetOf(PositionColorVertex, "position"),
                 },
                 .{
                     .location = 1,
                     .buffer_slot = 0,
-                    .format = .f32x2,
-                    .offset = @offsetOf(PositionTextureVertex, "tex_coord"),
+                    .format = .u8x4_normalized,
+                    .offset = @offsetOf(PositionColorVertex, "color"),
                 },
             },
         },
     };
-    const draw_pipeline = try device.createGraphicsPipeline(pipeline_create_info);
-    errdefer device.releaseGraphicsPipeline(draw_pipeline);
-
-    // Prepare texture and sampler.
-    const texture = try device.createTexture(.{
-        .format = .r8g8b8a8_unorm,
-        .width = window_width,
-        .height = window_height,
-        .layer_count_or_depth = 1,
-        .num_levels = 1,
-        .usage = .{ .compute_storage_write = true, .sampler = true },
-    });
-    errdefer device.releaseTexture(texture);
-    const sampler = try device.createSampler(.{
-        .address_mode_u = .repeat,
-        .address_mode_v = .repeat,
-    });
-    errdefer device.releaseSampler(sampler);
+    const pipeline = try device.createGraphicsPipeline(pipeline_create_info);
+    errdefer device.releaseGraphicsPipeline(pipeline);
 
     // Prepare vertex buffer.
     const vertex_buffer = try device.createBuffer(.{
@@ -182,21 +180,38 @@ pub fn init(
     });
     errdefer device.releaseBuffer(vertex_buffer);
 
+    // Create the index buffer.
+    const index_buffer = try device.createBuffer(.{
+        .usage = .{ .index = true },
+        .size = indices_bytes.len,
+    });
+    errdefer device.releaseBuffer(index_buffer);
+
+    // Create the index buffer.
+    const draw_buffer = try device.createBuffer(.{
+        .usage = .{ .indirect = true },
+        .size = indexed_draw_command_bytes.len + draw_commands_bytes.len,
+    });
+    errdefer device.releaseBuffer(draw_buffer);
+
     // Setup transfer buffer.
+    const transfer_buffer_vertex_data_off = 0;
+    const transfer_buffer_index_data_off = transfer_buffer_vertex_data_off + vertices_bytes.len;
+    const transfer_buffer_indexed_draw_command_off = transfer_buffer_index_data_off + indices_bytes.len;
+    const transfer_buffer_draw_commands_off = transfer_buffer_indexed_draw_command_off + indexed_draw_command_bytes.len;
     const transfer_buffer = try device.createTransferBuffer(.{
         .usage = .upload,
-        .size = vertices_bytes.len,
+        .size = @intCast(vertices_bytes.len + indices_bytes.len + indexed_draw_command_bytes.len + draw_commands_bytes.len),
     });
     defer device.releaseTransferBuffer(transfer_buffer);
     {
         const transfer_buffer_mapped = try device.mapTransferBuffer(transfer_buffer, false);
         defer device.unmapTransferBuffer(transfer_buffer);
-        @memcpy(transfer_buffer_mapped, vertices_bytes);
+        @memcpy(transfer_buffer_mapped[transfer_buffer_vertex_data_off .. transfer_buffer_vertex_data_off + vertices_bytes.len], vertices_bytes);
+        @memcpy(transfer_buffer_mapped[transfer_buffer_index_data_off .. transfer_buffer_index_data_off + indices_bytes.len], indices_bytes);
+        @memcpy(transfer_buffer_mapped[transfer_buffer_indexed_draw_command_off .. transfer_buffer_indexed_draw_command_off + indexed_draw_command_bytes.len], indexed_draw_command_bytes);
+        @memcpy(transfer_buffer_mapped[transfer_buffer_draw_commands_off .. transfer_buffer_draw_commands_off + draw_commands_bytes.len], draw_commands_bytes);
     }
-
-    // Create compute pipeline.
-    const fill_texture_pipeline_result = try loadComputeShader(device, comp_shader_name, comp_shader_source);
-    defer device.releaseComputePipeline(fill_texture_pipeline_result.pipeline);
 
     // Upload transfer data.
     const cmd_buf = try device.acquireCommandBuffer();
@@ -206,7 +221,7 @@ pub fn init(
         copy_pass.uploadToBuffer(
             .{
                 .transfer_buffer = transfer_buffer,
-                .offset = 0,
+                .offset = transfer_buffer_vertex_data_off,
             },
             .{
                 .buffer = vertex_buffer,
@@ -215,16 +230,30 @@ pub fn init(
             },
             false,
         );
-    }
-
-    // Create fill texture.
-    {
-        const compute_pass = cmd_buf.beginComputePass(&.{
-            .{ .texture = texture },
-        }, &.{});
-        defer compute_pass.end();
-        compute_pass.bindPipeline(fill_texture_pipeline_result.pipeline);
-        compute_pass.dispatch(window_width / fill_texture_pipeline_result.metadata.threadcount_x, window_height / fill_texture_pipeline_result.metadata.threadcount_y, fill_texture_pipeline_result.metadata.threadcount_z);
+        copy_pass.uploadToBuffer(
+            .{
+                .transfer_buffer = transfer_buffer,
+                .offset = transfer_buffer_index_data_off,
+            },
+            .{
+                .buffer = index_buffer,
+                .offset = 0,
+                .size = indices_bytes.len,
+            },
+            false,
+        );
+        copy_pass.uploadToBuffer(
+            .{
+                .transfer_buffer = transfer_buffer,
+                .offset = transfer_buffer_indexed_draw_command_off,
+            },
+            .{
+                .buffer = draw_buffer,
+                .offset = 0,
+                .size = indexed_draw_command_bytes.len + draw_commands_bytes.len,
+            },
+            false,
+        );
     }
     try cmd_buf.submit();
 
@@ -234,10 +263,10 @@ pub fn init(
     state.* = .{
         .device = device,
         .window = window,
-        .draw_pipeline = draw_pipeline,
+        .pipeline = pipeline,
         .vertex_buffer = vertex_buffer,
-        .texture = texture,
-        .sampler = sampler,
+        .index_buffer = index_buffer,
+        .draw_buffer = draw_buffer,
     };
 
     // Finish setup.
@@ -263,20 +292,19 @@ pub fn iterate(
             },
         }, null);
         defer render_pass.end();
-        render_pass.bindGraphicsPipeline(app_state.draw_pipeline);
+        render_pass.bindGraphicsPipeline(app_state.pipeline);
         render_pass.bindVertexBuffers(
             0,
             &.{
                 .{ .buffer = app_state.vertex_buffer, .offset = 0 },
             },
         );
-        render_pass.bindFragmentSamplers(
-            0,
-            &.{
-                .{ .texture = app_state.texture, .sampler = app_state.sampler },
-            },
+        render_pass.bindIndexBuffer(
+            .{ .buffer = app_state.index_buffer, .offset = 0 },
+            .indices_16bit,
         );
-        render_pass.drawPrimitives(6, 1, 0, 0);
+        render_pass.drawIndexedPrimitivesIndirect(app_state.draw_buffer, 0, 1);
+        render_pass.drawPrimitivesIndirect(app_state.draw_buffer, indexed_draw_command_bytes.len, 2);
     }
 
     // Finally submit the command buffer.
@@ -304,10 +332,10 @@ pub fn quit(
 ) void {
     _ = result;
     if (app_state) |val| {
-        val.device.releaseSampler(val.sampler);
-        val.device.releaseTexture(val.texture);
+        val.device.releaseBuffer(val.draw_buffer);
+        val.device.releaseBuffer(val.index_buffer);
         val.device.releaseBuffer(val.vertex_buffer);
-        val.device.releaseGraphicsPipeline(val.draw_pipeline);
+        val.device.releaseGraphicsPipeline(val.pipeline);
         val.device.releaseWindow(val.window);
         val.window.deinit();
         val.device.deinit();

@@ -18,23 +18,21 @@ const vert_shader_name = "Raw Triangle";
 const frag_shader_source = @embedFile("solidColor.frag");
 const frag_shader_name = "Solid Color";
 
-const window_width = 640;
-const window_height = 480;
-const small_viewport = sdl3.gpu.Viewport{
-    .region = .{ .x = 100, .y = 120, .w = 320, .h = 240 },
-    .min_depth = 0.1,
-    .max_depth = 1.0,
+const resolutions = [_]@Vector(2, u32){
+    .{ 640, 480 },
+    .{ 1280, 720 },
+    .{ 1024, 1024 },
+    .{ 1600, 900 },
+    .{ 1920, 1080 },
+    .{ 3200, 1800 },
+    .{ 3840, 2160 },
 };
-const scissor_rect = sdl3.rect.IRect{ .x = 320, .y = 240, .w = 320, .h = 240 };
 
 const AppState = struct {
     device: sdl3.gpu.Device,
     window: sdl3.video.Window,
-    fill_pipeline: sdl3.gpu.GraphicsPipeline,
-    line_pipeline: sdl3.gpu.GraphicsPipeline,
-    use_wireframe_mode: bool = false,
-    use_small_viewport: bool = false,
-    use_scissor_rect: bool = false,
+    pipeline: sdl3.gpu.GraphicsPipeline,
+    resolution_index: usize = 0,
 };
 
 fn loadGraphicsShader(
@@ -79,7 +77,7 @@ pub fn init(
     errdefer device.deinit();
 
     // Make our demo window.
-    const window = try sdl3.video.Window.init("Basic Triangle", window_width, window_height, .{});
+    const window = try sdl3.video.Window.init("Window Resize", resolutions[0][0], resolutions[0][1], .{});
     errdefer window.deinit();
     try device.claimWindow(window);
 
@@ -88,7 +86,7 @@ pub fn init(
     defer device.releaseShader(vertex_shader);
     const fragment_shader = try loadGraphicsShader(device, frag_shader_name, frag_shader_source, .fragment);
     defer device.releaseShader(fragment_shader);
-    var pipeline_create_info = sdl3.gpu.GraphicsPipelineCreateInfo{
+    const pipeline = try device.createGraphicsPipeline(.{
         .target_info = .{
             .color_target_descriptions = &.{
                 .{
@@ -98,12 +96,8 @@ pub fn init(
         },
         .vertex_shader = vertex_shader,
         .fragment_shader = fragment_shader,
-    };
-    const fill_pipeline = try device.createGraphicsPipeline(pipeline_create_info);
-    errdefer device.releaseGraphicsPipeline(fill_pipeline);
-    pipeline_create_info.rasterizer_state.fill_mode = .line;
-    const line_pipeline = try device.createGraphicsPipeline(pipeline_create_info);
-    errdefer device.releaseGraphicsPipeline(line_pipeline);
+    });
+    errdefer device.releaseGraphicsPipeline(pipeline);
 
     // Prepare app state.
     const state = try allocator.create(AppState);
@@ -111,18 +105,15 @@ pub fn init(
     state.* = .{
         .device = device,
         .window = window,
-        .line_pipeline = line_pipeline,
-        .fill_pipeline = fill_pipeline,
+        .pipeline = pipeline,
     };
 
     // Finish setup.
     app_state.* = state;
-    try sdl3.log.log("Press left to toggle wireframe", .{});
-    try sdl3.log.log("Press down to toggle small viewport", .{});
-    try sdl3.log.log("Press right to toggle scissor rect", .{});
+    try sdl3.log.log("Press left/right to resize the window", .{});
     try sdl3.log.log(
-        "State: {{Wireframe: {any}, SmallViewport: {any}, ScissorRect: {any}}}",
-        .{ state.use_wireframe_mode, state.use_small_viewport, state.use_scissor_rect },
+        "Resolution: {d}x{d}",
+        .{ resolutions[state.resolution_index][0], resolutions[state.resolution_index][1] },
     );
     return .run;
 }
@@ -145,11 +136,7 @@ pub fn iterate(
             },
         }, null);
         defer render_pass.end();
-        render_pass.bindGraphicsPipeline(if (app_state.use_wireframe_mode) app_state.line_pipeline else app_state.fill_pipeline);
-        if (app_state.use_small_viewport)
-            render_pass.setViewport(small_viewport);
-        if (app_state.use_scissor_rect)
-            render_pass.setScissor(scissor_rect);
+        render_pass.bindGraphicsPipeline(app_state.pipeline);
         render_pass.drawPrimitives(3, 1, 0, 0);
     }
 
@@ -169,23 +156,26 @@ pub fn event(
                 var changed = false;
                 if (key.key) |val| switch (val) {
                     .left => {
-                        app_state.use_wireframe_mode = !app_state.use_wireframe_mode;
-                        changed = true;
-                    },
-                    .down => {
-                        app_state.use_small_viewport = !app_state.use_small_viewport;
+                        if (app_state.resolution_index == 0) {
+                            app_state.resolution_index = resolutions.len - 1;
+                        } else app_state.resolution_index -= 1;
                         changed = true;
                     },
                     .right => {
-                        app_state.use_scissor_rect = !app_state.use_scissor_rect;
+                        if (app_state.resolution_index >= resolutions.len - 1) {
+                            app_state.resolution_index = 0;
+                        } else app_state.resolution_index += 1;
                         changed = true;
                     },
                     else => {},
                 };
                 if (changed) {
+                    try app_state.window.setSize(resolutions[app_state.resolution_index][0], resolutions[app_state.resolution_index][1]);
+                    try app_state.window.setPosition(.{ .centered = null }, .{ .centered = null });
+                    try app_state.window.sync();
                     try sdl3.log.log(
-                        "State: {{Wireframe: {any}, SmallViewport: {any}, ScissorRect: {any}}}",
-                        .{ app_state.use_wireframe_mode, app_state.use_small_viewport, app_state.use_scissor_rect },
+                        "Resolution: {d}x{d}",
+                        .{ resolutions[app_state.resolution_index][0], resolutions[app_state.resolution_index][1] },
                     );
                 }
             }
@@ -203,8 +193,7 @@ pub fn quit(
 ) void {
     _ = result;
     if (app_state) |val| {
-        val.device.releaseGraphicsPipeline(val.fill_pipeline);
-        val.device.releaseGraphicsPipeline(val.line_pipeline);
+        val.device.releaseGraphicsPipeline(val.pipeline);
         val.device.releaseWindow(val.window);
         val.window.deinit();
         val.device.deinit();

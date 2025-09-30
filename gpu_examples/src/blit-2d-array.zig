@@ -15,10 +15,11 @@ const allocator = std.heap.smp_allocator;
 
 const vert_shader_source = @embedFile("texturedQuad.vert");
 const vert_shader_name = "Textured Quad";
-const frag_shader_source = @embedFile("texturedQuad.frag");
-const frag_shader_name = "Textured Quad";
+const frag_shader_source = @embedFile("texturedQuadArray.frag");
+const frag_shader_name = "Textured Quad Array";
 
 const ravioli_bmp = @embedFile("images/ravioli.bmp");
+const ravioli_inverted_bmp = @embedFile("images/ravioliInverted.bmp");
 
 const window_width = 640;
 const window_height = 480;
@@ -30,9 +31,14 @@ const PositionTextureVertex = packed struct {
 
 const vertices = [_]PositionTextureVertex{
     .{ .position = .{ -1, 1, 0 }, .tex_coord = .{ 0, 0 } },
-    .{ .position = .{ 1, 1, 0 }, .tex_coord = .{ 4, 0 } },
-    .{ .position = .{ 1, -1, 0 }, .tex_coord = .{ 4, 4 } },
-    .{ .position = .{ -1, -1, 0 }, .tex_coord = .{ 0, 4 } },
+    .{ .position = .{ 0, 1, 0 }, .tex_coord = .{ 1, 0 } },
+    .{ .position = .{ 0, -1, 0 }, .tex_coord = .{ 1, 1 } },
+    .{ .position = .{ -1, -1, 0 }, .tex_coord = .{ 0, 1 } },
+
+    .{ .position = .{ 0, 1, 0 }, .tex_coord = .{ 0, 0 } },
+    .{ .position = .{ 1, 1, 0 }, .tex_coord = .{ 1, 0 } },
+    .{ .position = .{ 1, -1, 0 }, .tex_coord = .{ 1, 1 } },
+    .{ .position = .{ 0, -1, 0 }, .tex_coord = .{ 0, 1 } },
 };
 const vertices_bytes = std.mem.asBytes(&vertices);
 
@@ -46,24 +52,15 @@ const indices = [_]u16{
 };
 const indices_bytes = std.mem.asBytes(&indices);
 
-const sampler_names = [_][]const u8{
-    "PointClamp",
-    "PointWrap",
-    "LinearClamp",
-    "LinearWrap",
-    "AnisotropicClamp",
-    "AnisotropicWrap",
-};
-
 const AppState = struct {
     device: sdl3.gpu.Device,
     window: sdl3.video.Window,
     pipeline: sdl3.gpu.GraphicsPipeline,
     vertex_buffer: sdl3.gpu.Buffer,
     index_buffer: sdl3.gpu.Buffer,
-    texture: sdl3.gpu.Texture,
-    samplers: [sampler_names.len]sdl3.gpu.Sampler,
-    curr_sampler: usize = 0,
+    source_texture: sdl3.gpu.Texture,
+    destination_texture: sdl3.gpu.Texture,
+    sampler: sdl3.gpu.Sampler,
 };
 
 fn loadGraphicsShader(
@@ -116,7 +113,7 @@ pub fn init(
     errdefer device.deinit();
 
     // Make our demo window.
-    const window = try sdl3.video.Window.init("Basic Vertex Buffer", window_width, window_height, .{});
+    const window = try sdl3.video.Window.init("Blit 2d Array", window_width, window_height, .{});
     errdefer window.deinit();
     try device.claimWindow(window);
 
@@ -162,9 +159,8 @@ pub fn init(
     const pipeline = try device.createGraphicsPipeline(pipeline_create_info);
     errdefer device.releaseGraphicsPipeline(pipeline);
 
-    // Create samplers.
-    var samplers: [sampler_names.len]sdl3.gpu.Sampler = undefined;
-    samplers[0] = try device.createSampler(.{
+    // Create sampler.
+    const sampler = try device.createSampler(.{
         .min_filter = .nearest,
         .mag_filter = .nearest,
         .mipmap_mode = .nearest,
@@ -172,54 +168,6 @@ pub fn init(
         .address_mode_v = .clamp_to_edge,
         .address_mode_w = .clamp_to_edge,
     });
-    errdefer device.releaseSampler(samplers[0]);
-    samplers[1] = try device.createSampler(.{
-        .min_filter = .nearest,
-        .mag_filter = .nearest,
-        .mipmap_mode = .nearest,
-        .address_mode_u = .repeat,
-        .address_mode_v = .repeat,
-        .address_mode_w = .repeat,
-    });
-    errdefer device.releaseSampler(samplers[1]);
-    samplers[2] = try device.createSampler(.{
-        .min_filter = .linear,
-        .mag_filter = .linear,
-        .mipmap_mode = .linear,
-        .address_mode_u = .clamp_to_edge,
-        .address_mode_v = .clamp_to_edge,
-        .address_mode_w = .clamp_to_edge,
-    });
-    errdefer device.releaseSampler(samplers[2]);
-    samplers[3] = try device.createSampler(.{
-        .min_filter = .linear,
-        .mag_filter = .linear,
-        .mipmap_mode = .linear,
-        .address_mode_u = .repeat,
-        .address_mode_v = .repeat,
-        .address_mode_w = .repeat,
-    });
-    errdefer device.releaseSampler(samplers[3]);
-    samplers[4] = try device.createSampler(.{
-        .min_filter = .linear,
-        .mag_filter = .linear,
-        .mipmap_mode = .linear,
-        .address_mode_u = .clamp_to_edge,
-        .address_mode_v = .clamp_to_edge,
-        .address_mode_w = .clamp_to_edge,
-        .max_anisotropy = 4,
-    });
-    errdefer device.releaseSampler(samplers[4]);
-    samplers[5] = try device.createSampler(.{
-        .min_filter = .linear,
-        .mag_filter = .linear,
-        .mipmap_mode = .linear,
-        .address_mode_u = .repeat,
-        .address_mode_v = .repeat,
-        .address_mode_w = .repeat,
-        .max_anisotropy = 4,
-    });
-    errdefer device.releaseSampler(samplers[5]);
 
     // Prepare vertex buffer.
     const vertex_buffer = try device.createBuffer(.{
@@ -235,31 +183,48 @@ pub fn init(
     });
     errdefer device.releaseBuffer(index_buffer);
 
-    // Load the image.
+    // Load the images.
     const image_data = try loadImage(ravioli_bmp);
     defer image_data.deinit();
     const image_bytes = image_data.getPixels().?[0 .. image_data.getWidth() * image_data.getHeight() * @sizeOf(u8) * 4];
+    const image_data_inverted = try loadImage(ravioli_inverted_bmp);
+    defer image_data_inverted.deinit();
+    const image_inverted_bytes = image_data_inverted.getPixels().?[0 .. image_data_inverted.getWidth() * image_data_inverted.getHeight() * @sizeOf(u8) * 4];
+    std.debug.assert(image_data.getWidth() == image_data_inverted.getWidth());
+    std.debug.assert(image_data.getHeight() == image_data_inverted.getHeight());
 
-    // Create texture.
-    const texture = try device.createTexture(.{
-        .texture_type = .two_dimensional,
+    // Create textures.
+    const source_texture = try device.createTexture(.{
+        .texture_type = .two_dimensional_array,
         .format = .r8g8b8a8_unorm,
         .width = @intCast(image_data.getWidth()),
         .height = @intCast(image_data.getHeight()),
-        .layer_count_or_depth = 1,
+        .layer_count_or_depth = 2,
         .num_levels = 1,
         .usage = .{ .sampler = true },
-        .props = .{ .name = "Ravioli Texture" },
+        .props = .{ .name = "Ravioli Textures Source" },
     });
-    errdefer device.releaseTexture(texture);
+    errdefer device.releaseTexture(source_texture);
+    const destination_textures = try device.createTexture(.{
+        .texture_type = .two_dimensional_array,
+        .format = .r8g8b8a8_unorm,
+        .width = @intCast(image_data.getWidth() / 2),
+        .height = @intCast(image_data.getHeight() / 2),
+        .layer_count_or_depth = 2,
+        .num_levels = 1,
+        .usage = .{ .sampler = true, .color_target = true },
+        .props = .{ .name = "Ravioli Textures Destination" },
+    });
+    errdefer device.releaseTexture(destination_textures);
 
     // Setup transfer buffer.
     const transfer_buffer_vertex_data_off = 0;
     const transfer_buffer_index_data_off = transfer_buffer_vertex_data_off + vertices_bytes.len;
     const transfer_buffer_image_data_off = transfer_buffer_index_data_off + indices_bytes.len;
+    const transfer_buffer_image_inverted_data_off = transfer_buffer_image_data_off + image_bytes.len;
     const transfer_buffer = try device.createTransferBuffer(.{
         .usage = .upload,
-        .size = @intCast(vertices_bytes.len + indices_bytes.len + image_bytes.len),
+        .size = @intCast(vertices_bytes.len + indices_bytes.len + image_bytes.len + image_inverted_bytes.len),
     });
     defer device.releaseTransferBuffer(transfer_buffer);
     {
@@ -268,6 +233,7 @@ pub fn init(
         @memcpy(transfer_buffer_mapped[transfer_buffer_vertex_data_off .. transfer_buffer_vertex_data_off + vertices_bytes.len], vertices_bytes);
         @memcpy(transfer_buffer_mapped[transfer_buffer_index_data_off .. transfer_buffer_index_data_off + indices_bytes.len], indices_bytes);
         @memcpy(transfer_buffer_mapped[transfer_buffer_image_data_off .. transfer_buffer_image_data_off + image_bytes.len], image_bytes);
+        @memcpy(transfer_buffer_mapped[transfer_buffer_image_inverted_data_off .. transfer_buffer_image_inverted_data_off + image_inverted_bytes.len], image_inverted_bytes);
     }
 
     // Upload transfer data.
@@ -305,14 +271,54 @@ pub fn init(
                 .offset = transfer_buffer_image_data_off,
             },
             .{
-                .texture = texture,
+                .texture = source_texture,
                 .width = @intCast(image_data.getWidth()),
                 .height = @intCast(image_data.getHeight()),
                 .depth = 1,
             },
             false,
         );
+        copy_pass.uploadToTexture(
+            .{
+                .transfer_buffer = transfer_buffer,
+                .offset = @intCast(transfer_buffer_image_inverted_data_off),
+            },
+            .{
+                .texture = source_texture,
+                .width = @intCast(image_data_inverted.getWidth()),
+                .height = @intCast(image_data_inverted.getHeight()),
+                .depth = 1,
+                .layer = 1,
+            },
+            false,
+        );
     }
+    cmd_buf.blitTexture(.{
+        .source = .{
+            .texture = source_texture,
+            .region = .{ .x = 0, .y = 0, .w = @intCast(image_data.getWidth()), .h = @intCast(image_data.getHeight()) },
+        },
+        .destination = .{
+            .texture = destination_textures,
+            .region = .{ .x = 0, .y = 0, .w = @intCast(image_data.getWidth() / 2), .h = @intCast(image_data.getHeight() / 2) },
+        },
+        .load_op = .do_not_care,
+        .filter = .linear,
+    });
+    cmd_buf.blitTexture(.{
+        .source = .{
+            .texture = source_texture,
+            .region = .{ .x = 0, .y = 0, .w = @intCast(image_data.getWidth()), .h = @intCast(image_data.getHeight()) },
+            .layer_or_depth_plane = 1,
+        },
+        .destination = .{
+            .texture = destination_textures,
+            .region = .{ .x = 0, .y = 0, .w = @intCast(image_data.getWidth() / 2), .h = @intCast(image_data.getHeight() / 2) },
+            .layer_or_depth_plane = 1,
+        },
+        .load_op = .load,
+        .filter = .linear,
+    });
     try cmd_buf.submit();
 
     // Prepare app state.
@@ -324,13 +330,12 @@ pub fn init(
         .pipeline = pipeline,
         .vertex_buffer = vertex_buffer,
         .index_buffer = index_buffer,
-        .texture = texture,
-        .samplers = samplers,
+        .source_texture = source_texture,
+        .destination_texture = destination_textures,
+        .sampler = sampler,
     };
 
     // Finish setup.
-    try sdl3.log.log("Press left/right to switch between sampler states", .{});
-    try sdl3.log.log("Sampler state: {s}", .{sampler_names[state.curr_sampler]});
     app_state.* = state;
     return .run;
 }
@@ -367,10 +372,17 @@ pub fn iterate(
         render_pass.bindFragmentSamplers(
             0,
             &.{
-                .{ .texture = app_state.texture, .sampler = app_state.samplers[app_state.curr_sampler] },
+                .{ .texture = app_state.source_texture, .sampler = app_state.sampler },
             },
         );
         render_pass.drawIndexedPrimitives(6, 1, 0, 0, 0);
+        render_pass.bindFragmentSamplers(
+            0,
+            &.{
+                .{ .texture = app_state.destination_texture, .sampler = app_state.sampler },
+            },
+        );
+        render_pass.drawIndexedPrimitives(6, 1, 0, 4, 0);
     }
 
     // Finally submit the command buffer.
@@ -383,30 +395,8 @@ pub fn event(
     app_state: *AppState,
     curr_event: sdl3.events.Event,
 ) !sdl3.AppResult {
+    _ = app_state;
     switch (curr_event) {
-        .key_down => |key| {
-            if (!key.repeat) {
-                var changed = false;
-                if (key.key) |val| switch (val) {
-                    .left => {
-                        if (app_state.curr_sampler == 0) {
-                            app_state.curr_sampler = sampler_names.len - 1;
-                        } else app_state.curr_sampler -= 1;
-                        changed = true;
-                    },
-                    .right => {
-                        if (app_state.curr_sampler >= sampler_names.len - 1) {
-                            app_state.curr_sampler = 0;
-                        } else app_state.curr_sampler += 1;
-                        changed = true;
-                    },
-                    else => {},
-                };
-                if (changed) {
-                    try sdl3.log.log("Sampler state: {s}", .{sampler_names[app_state.curr_sampler]});
-                }
-            }
-        },
         .terminating => return .success,
         .quit => return .success,
         else => {},
@@ -420,9 +410,9 @@ pub fn quit(
 ) void {
     _ = result;
     if (app_state) |val| {
-        for (val.samplers) |sampler|
-            val.device.releaseSampler(sampler);
-        val.device.releaseTexture(val.texture);
+        val.device.releaseSampler(val.sampler);
+        val.device.releaseTexture(val.destination_texture);
+        val.device.releaseTexture(val.source_texture);
         val.device.releaseBuffer(val.index_buffer);
         val.device.releaseBuffer(val.vertex_buffer);
         val.device.releaseGraphicsPipeline(val.pipeline);

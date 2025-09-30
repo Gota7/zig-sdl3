@@ -3048,11 +3048,11 @@ pub const IndexedIndirectDrawCommand = extern struct {
     /// The number of instances to draw.
     num_instances: u32,
     /// The base index within the index buffer.
-    first_index: u32,
+    first_index: u32 = 0,
     /// The value added to the vertex index before indexing into the vertex buffer.
-    vertex_offset: i32,
+    vertex_offset: i32 = 0,
     /// The ID of the first instance to draw.
-    first_instance: u32,
+    first_instance: u32 = 0,
 
     // Size tests.
     comptime {
@@ -3109,9 +3109,9 @@ pub const IndirectDrawCommand = extern struct {
     /// The number of instances to draw.
     num_instances: u32,
     /// The index of the first vertex to draw.
-    first_vertex: u32,
+    first_vertex: u32 = 0,
     /// The ID of the first instance to draw.
-    first_instance: u32,
+    first_instance: u32 = 0,
 
     // Size tests.
     comptime {
@@ -4243,6 +4243,9 @@ pub const SwapchainComposition = enum(c.SDL_GPUSwapchainComposition) {
 /// This struct is available since SDL 3.2.0.
 pub const Texture = packed struct {
     value: ?*c.SDL_GPUTexture,
+
+    /// A null texture.
+    pub const @"null" = Texture{ .value = null };
 
     // Size tests.
     comptime {

@@ -168,8 +168,9 @@ pub fn quit(
     if (app_state) |val| {
         val.device.releaseComputePipeline(val.gradient_render_pipeline);
         val.device.releaseTexture(val.gradient_render_texture);
-        val.device.deinit();
+        val.device.releaseWindow(val.window);
         val.window.deinit();
+        val.device.deinit();
         allocator.destroy(val);
     }
 }

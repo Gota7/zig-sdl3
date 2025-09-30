@@ -316,8 +316,9 @@ pub fn quit(
         for (val.pipelines) |pipeline| {
             val.device.releaseGraphicsPipeline(pipeline);
         }
-        val.device.deinit();
+        val.device.releaseWindow(val.window);
         val.window.deinit();
+        val.device.deinit();
         allocator.destroy(val);
     }
 }

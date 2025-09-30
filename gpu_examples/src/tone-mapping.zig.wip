@@ -1,0 +1,391 @@
+const options = @import("options");
+const sdl3 = @import("sdl3");
+const std = @import("std");
+
+comptime {
+    _ = sdl3.main_callbacks;
+}
+
+// Disable main hack.
+pub const _start = void;
+pub const WinMainCRTStartup = void;
+
+/// Allocator we will use.
+const allocator = std.heap.smp_allocator;
+
+const window_width = 640;
+const window_height = 480;
+
+const linear_to_srgb_source = @embedFile("linearToSrgb.comp");
+const linear_to_srgb_name = "Linear To SRGB";
+const linear_to_st2084_source = @embedFile("linearToSt2084.comp");
+const linear_to_st2084_name = "Linear To ST2084";
+
+const swapchain_compositions = [_]struct {
+    val: sdl3.gpu.SwapchainComposition,
+    name: [:0]const u8,
+}{
+    .{ .val = .sdr, .name = "SDR" },
+    .{ .val = .sdr_linear, .name = "SDR Linear" },
+    .{ .val = .hdr_extended_linear, .name = "HDR Extended Linear" },
+    .{ .val = .hdr10_st2084, .name = "HDR10 ST2084" },
+};
+
+const tonemap_operators = [_]struct {
+    shader_source: [:0]const u8,
+    shader_name: [:0]const u8,
+    name: [:0]const u8,
+}{
+    .{ .shader_source = @embedFile("toneMapReinhard.comp"), .shader_name = "Tone Map Reinhard", .name = "Reinhard" },
+    .{ .shader_source = @embedFile("toneMapExtendedReinhardLuminance.comp"), .shader_name = "Extended Reinhard Luminance", .name = "ExtendedReinhardLuminance" },
+    .{ .shader_source = @embedFile("toneMapHable.comp"), .shader_name = "Hable", .name = "Hable" },
+    .{ .shader_source = @embedFile("toneMapAces.comp"), .shader_name = "ACES", .name = "ACES" },
+};
+
+const AppState = struct {
+    device: sdl3.gpu.Device,
+    window: sdl3.video.Window,
+    hdr_texture: sdl3.gpu.Texture,
+    tonemap_texture: sdl3.gpu.Texture,
+    transfer_texture: sdl3.gpu.Texture,
+    linear_to_srgb_pipeline: sdl3.gpu.ComputePipeline,
+    linear_to_srgb_metadata: sdl3.shadercross.ComputePipelineMetadata,
+    linear_to_st2048_pipeline: sdl3.gpu.ComputePipeline,
+    linear_to_st2048_metadata: sdl3.shadercross.ComputePipelineMetadata,
+    tonemap_pipelines: [tonemap_operators.len]sdl3.gpu.ComputePipeline,
+    tonemap_metadata: [tonemap_operators.len]sdl3.shadercross.ComputePipelineMetadata,
+    width: usize,
+    height: usize,
+    last_successful_swapchain_composition: @typeInfo(@TypeOf(swapchain_compositions)).array.child,
+    curr_swapchain_composition: usize = 0,
+    curr_tonemap_operator: usize = 0,
+};
+
+fn loadComputeShader(
+    device: sdl3.gpu.Device,
+    name: ?[:0]const u8,
+    shader_code: [:0]const u8,
+) !struct { pipeline: sdl3.gpu.ComputePipeline, metadata: sdl3.shadercross.ComputePipelineMetadata } {
+    const spirv_code = if (options.spirv) shader_code else try sdl3.shadercross.compileSpirvFromHlsl(.{
+        .defines = null,
+        .enable_debug = options.gpu_debug,
+        .entry_point = "main",
+        .include_dir = null,
+        .name = name,
+        .shader_stage = .compute,
+        .source = shader_code,
+    });
+    const spirv_metadata = try sdl3.shadercross.reflectComputeSpirv(spirv_code);
+    return .{ .pipeline = try sdl3.shadercross.compileComputePipelineFromSpirv(device, .{
+        .bytecode = spirv_code,
+        .enable_debug = options.gpu_debug,
+        .entry_point = "main",
+        .name = name,
+        .shader_stage = .compute,
+    }, spirv_metadata), .metadata = spirv_metadata };
+}
+
+pub fn init(
+    app_state: *?*AppState,
+    args: [][*:0]u8,
+) !sdl3.AppResult {
+    _ = args;
+
+    // SDL3 setup.
+    try sdl3.init(.{ .video = true });
+    sdl3.errors.error_callback = &sdl3.extras.sdlErrZigLog;
+    sdl3.log.setLogOutputFunction(void, &sdl3.extras.sdlLogZigLog, null);
+
+    // Get our GPU device that supports SPIR-V.
+    const shader_formats = sdl3.shadercross.getSpirvShaderFormats() orelse @panic("No formats available");
+    const device = try sdl3.gpu.Device.init(shader_formats, options.gpu_debug, null);
+    errdefer device.deinit();
+
+    // Make our demo window.
+    const window = try sdl3.video.Window.init("Tone Mapping", window_width, window_height, .{});
+    errdefer window.deinit();
+    try device.claimWindow(window);
+
+    // Load HDR texture.
+    const hdr_data: sdl3.surface.Surface = undefined; // TODO!!!
+    defer hdr_data.deinit();
+    const hdr_bytes = hdr_data.getPixels().?[0 .. hdr_data.getWidth() * hdr_data.getHeight() * @sizeOf(f32) * 4];
+    const width = hdr_data.getWidth();
+    const height = hdr_data.getHeight();
+    try window.setSize(hdr_data.getWidth(), hdr_data.getHeight());
+
+    // Create GPU textures.
+    const hdr_texture = try device.createTexture(.{
+        .texture_type = .two_dimensional,
+        .format = .r32g32b32a32_float,
+        .width = @intCast(width),
+        .height = @intCast(height),
+        .layer_count_or_depth = 1,
+        .num_levels = 1,
+        .usage = .{ .sampler = true, .compute_storage_read = true },
+        .props = .{ .name = "HDR Texture" },
+    });
+    errdefer device.releaseTexture(hdr_texture);
+    const tonemap_texture = try device.createTexture(.{
+        .texture_type = .two_dimensional,
+        .format = .r16g16b16a16_float,
+        .width = @intCast(width),
+        .height = @intCast(height),
+        .layer_count_or_depth = 1,
+        .num_levels = 1,
+        .usage = .{ .sampler = true, .compute_storage_read = true, .compute_storage_write = true },
+        .props = .{ .name = "Tonemap Texture" },
+    });
+    errdefer device.releaseTexture(tonemap_texture);
+    const transfer_texture = try device.createTexture(.{
+        .texture_type = .two_dimensional,
+        .format = .r8g8b8a8_unorm,
+        .width = @intCast(width),
+        .height = @intCast(height),
+        .layer_count_or_depth = 1,
+        .num_levels = 1,
+        .usage = .{ .sampler = true, .compute_storage_write = true },
+        .props = .{ .name = "Transfer Texture" },
+    });
+    errdefer device.releaseTexture(transfer_texture);
+
+    // Setup transfer buffer.
+    const transfer_buffer = try device.createTransferBuffer(.{
+        .usage = .upload,
+        .size = @intCast(hdr_bytes.len),
+    });
+    defer device.releaseTransferBuffer(transfer_buffer);
+    {
+        const transfer_buffer_mapped = try device.mapTransferBuffer(transfer_buffer, false);
+        defer device.unmapTransferBuffer(transfer_buffer);
+        @memcpy(transfer_buffer_mapped[0..hdr_bytes.len], hdr_bytes);
+    }
+
+    // Upload transfer data.
+    const cmd_buf = try device.acquireCommandBuffer();
+    {
+        const copy_pass = cmd_buf.beginCopyPass();
+        defer copy_pass.end();
+        copy_pass.uploadToTexture(
+            .{
+                .transfer_buffer = transfer_buffer,
+                .offset = 0,
+            },
+            .{
+                .texture = hdr_texture,
+                .width = @intCast(width),
+                .height = @intCast(height),
+                .depth = 1,
+            },
+            false,
+        );
+    }
+    try cmd_buf.submit();
+
+    // Load pipelines.
+    const linear_to_srgb_res = try loadComputeShader(device, linear_to_srgb_name, linear_to_srgb_source);
+    errdefer device.releaseComputePipeline(linear_to_srgb_res.pipeline);
+    const linear_to_st2084_res = try loadComputeShader(device, linear_to_st2084_name, linear_to_st2084_source);
+    errdefer device.releaseComputePipeline(linear_to_st2084_res.pipeline);
+
+    var tonemap_metadata: [tonemap_operators.len]sdl3.shadercross.ComputePipelineMetadata = undefined;
+    var tonemap_pipelines: [tonemap_operators.len]sdl3.gpu.ComputePipeline = undefined;
+
+    const tonemap_res_0 = try loadComputeShader(device, tonemap_operators[0].shader_name, tonemap_operators[0].shader_source);
+    errdefer device.releaseComputePipeline(tonemap_res_0.pipeline);
+    tonemap_metadata[0] = tonemap_res_0.metadata;
+    tonemap_pipelines[0] = tonemap_res_0.pipeline;
+
+    const tonemap_res_1 = try loadComputeShader(device, tonemap_operators[1].shader_name, tonemap_operators[1].shader_source);
+    errdefer device.releaseComputePipeline(tonemap_res_1.pipeline);
+    tonemap_metadata[1] = tonemap_res_1.metadata;
+    tonemap_pipelines[1] = tonemap_res_1.pipeline;
+
+    const tonemap_res_2 = try loadComputeShader(device, tonemap_operators[2].shader_name, tonemap_operators[2].shader_source);
+    errdefer device.releaseComputePipeline(tonemap_res_2.pipeline);
+    tonemap_metadata[2] = tonemap_res_2.metadata;
+    tonemap_pipelines[2] = tonemap_res_2.pipeline;
+
+    const tonemap_res_3 = try loadComputeShader(device, tonemap_operators[3].shader_name, tonemap_operators[3].shader_source);
+    errdefer device.releaseComputePipeline(tonemap_res_3.pipeline);
+    tonemap_metadata[3] = tonemap_res_3.metadata;
+    tonemap_pipelines[3] = tonemap_res_3.pipeline;
+
+    // Prepare app state.
+    const state = try allocator.create(AppState);
+    errdefer allocator.destroy(state);
+    state.* = .{
+        .device = device,
+        .window = window,
+        .hdr_texture = hdr_texture,
+        .tonemap_texture = tonemap_texture,
+        .transfer_texture = transfer_texture,
+        .linear_to_srgb_pipeline = linear_to_srgb_res.pipeline,
+        .linear_to_srgb_metadata = linear_to_srgb_res.metadata,
+        .linear_to_st2048_pipeline = linear_to_st2084_res.pipeline,
+        .linear_to_st2048_metadata = linear_to_st2084_res.metadata,
+        .tonemap_pipelines = tonemap_pipelines,
+        .tonemap_metadata = tonemap_metadata,
+        .width = width,
+        .height = height,
+        .last_successful_swapchain_composition = swapchain_compositions[0],
+    };
+
+    // Log state.
+    try sdl3.log.log("Press left/right to cycle swapchain composition", .{});
+    try sdl3.log.log("Press up/down to cycle tonemap operators", .{});
+    try sdl3.log.log(
+        "State: {SwapchainComposition: {any}, TonemapOperator: {any}}}",
+        .{ state.last_successful_swapchain_composition.name, tonemap_operators[app_state.curr_tonemap_operator].name },
+    );
+
+    // Finish setup.
+    app_state.* = state;
+    return .run;
+}
+
+pub fn iterate(
+    app_state: *AppState,
+) !sdl3.AppResult {
+
+    // Get command buffer and swapchain texture.
+    const cmd_buf = try app_state.device.acquireCommandBuffer();
+    const swapchain_texture = try cmd_buf.waitAndAcquireSwapchainTexture(app_state.window);
+    if (swapchain_texture.texture) |texture| {
+
+        // Tonemap.
+        {
+            const compute_pass = cmd_buf.beginComputePass(
+                &.{
+                    .{ .texture = app_state.tonemap_texture, .cycle = true },
+                },
+                &.{},
+            );
+            defer compute_pass.end();
+            compute_pass.bindPipeline(app_state.tonemap_pipelines[app_state.curr_tonemap_operator]);
+            compute_pass.bindStorageTextures(0, &.{app_state.hdr_texture});
+            const metadata = app_state.tonemap_metadata[app_state.curr_tonemap_operator];
+            compute_pass.dispatch(app_state.width / metadata.threadcount_x, app_state.height / metadata.threadcount_y, metadata.threadcount_z);
+        }
+
+        // Transfer to target color space if necessary.
+        var blit_src_texture = app_state.tonemap_texture;
+        const curr_swapchain_composition = swapchain_compositions[app_state.curr_swapchain_composition].val;
+        if (curr_swapchain_composition == .sdr or curr_swapchain_composition == .hdr10_st2084) {
+            const compute_pass = cmd_buf.beginComputePass(
+                &.{
+                    .{ .texture = app_state.transfer_texture, .cycle = true },
+                },
+                &.{},
+            );
+            defer compute_pass.end();
+            if (curr_swapchain_composition == .sdr) {
+                compute_pass.bindPipeline(app_state.linear_to_srgb_pipeline);
+            } else compute_pass.bindPipeline(app_state.linear_to_st2048_pipeline);
+            const metadata = if (curr_swapchain_composition == .sdr) app_state.linear_to_srgb_metadata else app_state.linear_to_st2048_metadata;
+
+            compute_pass.bindStorageTextures(0, &.{app_state.tonemap_texture});
+            compute_pass.dispatch(app_state.width / metadata.threadcount_x, app_state.height / metadata.threadcount_y, metadata.threadcount_z);
+            blit_src_texture = app_state.transfer_texture;
+        }
+
+        // Blit to swapchain.
+        cmd_buf.blitTexture(.{
+            .source = .{
+                .texture = blit_src_texture,
+                .region = .{ .x = 0, .y = 0, .w = app_state.width, .h = app_state.height },
+            },
+            .destination = .{
+                .texture = texture,
+                .region = .{ .x = 0, .y = 0, .w = swapchain_texture.width, .h = swapchain_texture.height },
+            },
+            .load_op = .do_not_care,
+            .filter = .nearest,
+        });
+    }
+
+    // Finally submit the command buffer.
+    try cmd_buf.submit();
+
+    return .run;
+}
+
+pub fn event(
+    app_state: *AppState,
+    curr_event: sdl3.events.Event,
+) !sdl3.AppResult {
+    switch (curr_event) {
+        .key_down => |key| {
+            if (!key.repeat) {
+                var swapchain_composition_changed = false;
+                var tonemap_operator_changed = false;
+                if (key.key) |val| switch (val) {
+                    .left => {
+                        if (app_state.curr_swapchain_composition == 0) {
+                            app_state.curr_swapchain_composition = swapchain_compositions.len - 1;
+                        } else app_state.curr_swapchain_composition -= 1;
+                        swapchain_composition_changed = true;
+                    },
+                    .right => {
+                        if (app_state.curr_swapchain_composition >= swapchain_compositions.len - 1) {
+                            app_state.curr_swapchain_composition = 0;
+                        } else app_state.curr_swapchain_composition += 1;
+                        swapchain_composition_changed = true;
+                    },
+                    .up => {
+                        if (app_state.curr_tonemap_operator == 0) {
+                            app_state.curr_tonemap_operator = tonemap_operators.len - 1;
+                        } else app_state.curr_tonemap_operator -= 1;
+                        tonemap_operator_changed = true;
+                    },
+                    .down => {
+                        if (app_state.curr_tonemap_operator >= tonemap_operators.len - 1) {
+                            app_state.curr_tonemap_operator = 0;
+                        } else app_state.curr_tonemap_operator += 1;
+                        tonemap_operator_changed = true;
+                    },
+                    else => {},
+                };
+                if (swapchain_composition_changed) {
+                    if (app_state.device.windowSupportsSwapchainComposition(app_state.window, swapchain_compositions[app_state.curr_swapchain_composition].val)) {
+                        app_state.last_successful_swapchain_composition = swapchain_compositions[app_state.curr_swapchain_composition];
+                        try app_state.device.setSwapchainParameters(app_state.window, app_state.last_successful_swapchain_composition.val, .vsync);
+                    } else {
+                        swapchain_composition_changed = false;
+                        try sdl3.log.Category.gpu.logError("Swapchain composition to {s} unsupported", .{swapchain_compositions[app_state.curr_swapchain_composition].name});
+                    }
+                }
+                if (swapchain_composition_changed or tonemap_operator_changed) {
+                    try sdl3.log.log(
+                        "State: {SwapchainComposition: {any}, TonemapOperator: {any}}}",
+                        .{ app_state.last_successful_swapchain_composition.name, tonemap_operators[app_state.curr_tonemap_operator].name },
+                    );
+                }
+            }
+        },
+        .terminating => return .success,
+        .quit => return .success,
+        else => {},
+    }
+    return .run;
+}
+
+pub fn quit(
+    app_state: ?*AppState,
+    result: sdl3.AppResult,
+) void {
+    _ = result;
+    if (app_state) |val| {
+        for (val.tonemap_pipelines) |pipeline|
+            val.device.releaseComputePipeline(pipeline);
+        val.device.releaseComputePipeline(val.linear_to_st2048_pipeline);
+        val.device.releaseComputePipeline(val.linear_to_srgb_pipeline);
+        val.device.releaseTexture(val.transfer_texture);
+        val.device.releaseTexture(val.tone_map_texture);
+        val.device.releaseTexture(val.hdr_texture);
+        val.device.releaseWindow(val.window);
+        val.window.deinit();
+        val.device.deinit();
+        allocator.destroy(val);
+    }
+}

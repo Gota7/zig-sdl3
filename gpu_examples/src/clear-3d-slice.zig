@@ -167,8 +167,9 @@ pub fn quit(
     _ = result;
     if (app_state) |val| {
         val.device.releaseTexture(val.texture_3d);
-        val.device.deinit();
+        val.device.releaseWindow(val.window);
         val.window.deinit();
+        val.device.deinit();
         allocator.destroy(val);
     }
 }
