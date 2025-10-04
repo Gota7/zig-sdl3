@@ -1,5 +1,9 @@
 const std = @import("std");
 
+const depth_overrides = [_][]const u8{
+    "solidColorDepth.frag",
+};
+
 const ShaderFormat = enum {
     glsl,
     hlsl,
@@ -23,18 +27,18 @@ fn setupShader(
             glslang_cmd.addArg(suffix);
             if (actual_format == .hlsl)
                 glslang_cmd.addArg("-D");
-            glslang_cmd.addFileArg(b.path(try std.fmt.allocPrint(b.allocator, "shaders/{s}.{s}", .{ name, if (actual_format == .glsl) "glsl" else "hlsl" })));
+            glslang_cmd.addFileArg(b.path(b.fmt("shaders/{s}.{s}", .{ name, if (actual_format == .glsl) "glsl" else "hlsl" })));
             glslang_cmd.addArg("-o");
-            const glslang_cmd_out = glslang_cmd.addOutputFileArg(try std.fmt.allocPrint(b.allocator, "{s}.spv", .{name}));
+            const glslang_cmd_out = glslang_cmd.addOutputFileArg(b.fmt("{s}.spv", .{name}));
 
             module.addAnonymousImport(name, .{ .root_source_file = glslang_cmd_out });
         },
-        .hlsl_runtime => module.addAnonymousImport(name, .{ .root_source_file = b.path(try std.fmt.allocPrint(b.allocator, "shaders/{s}.hlsl", .{name})) }),
+        .hlsl_runtime => module.addAnonymousImport(name, .{ .root_source_file = b.path(b.fmt("shaders/{s}.hlsl", .{name})) }),
         .zig => {
             const obj = b.addObject(.{
                 .name = name,
                 .root_module = b.addModule(name, .{
-                    .root_source_file = b.path(try std.fmt.allocPrint(b.allocator, "shaders/{s}.zig", .{name})),
+                    .root_source_file = b.path(b.fmt("shaders/{s}.zig", .{name})),
                     .target = b.resolveTargetQuery(.{
                         .cpu_arch = .spirv64,
                         .cpu_model = .{ .explicit = &std.Target.spirv.cpu.vulkan_v1_2 },
@@ -49,10 +53,57 @@ fn setupShader(
             var shader_out = obj.getEmittedBin();
 
             if (b.findProgram(&.{"spirv-opt"}, &.{})) |spirv_opt| {
+
+                // Remove duplicate type definitions that might be done by inline assembly.
+                const spirv_fix = b.addSystemCommand(&.{ spirv_opt, "--remove-duplicates", "--skip-validation" });
+                spirv_fix.addFileArg(obj.getEmittedBin());
+                spirv_fix.addArg("-o");
+                var fixed_spirv = spirv_fix.addOutputFileArg(b.fmt("{s}-fixed.spv", .{name}));
+
+                // Handle depth overrides.
+                var depth_override = false;
+                for (depth_overrides) |val| {
+                    if (std.mem.eql(u8, val, name)) {
+                        depth_override = true;
+                        break;
+                    }
+                }
+                if (depth_override) {
+
+                    // Disassemble into SPIRV assembly.
+                    const spirv_dis = try b.findProgram(&.{"spirv-dis"}, &.{});
+                    const spirv_dis_cmd = b.addSystemCommand(&.{spirv_dis});
+                    spirv_dis_cmd.addFileArg(fixed_spirv);
+                    spirv_dis_cmd.addArg("-o");
+                    const spirv_dis_out = spirv_dis_cmd.addOutputFileArg(b.fmt("{s}.spvasm", .{name}));
+
+                    // Modify the execution mode using a custom build tool.
+                    const spirv_execution_mode = b.addExecutable(.{
+                        .name = "spirv-execution-mode",
+                        .root_module = b.createModule(.{
+                            .root_source_file = b.path("build_tools/spirv_execution_mode.zig"),
+                            .target = b.graph.host,
+                        }),
+                    });
+                    const spirv_execution_mode_cmd = b.addRunArtifact(spirv_execution_mode);
+                    spirv_execution_mode_cmd.addFileArg(spirv_dis_out);
+                    const execution_mode_changed_spirv = spirv_execution_mode_cmd.addOutputFileArg(b.fmt("{s}-execution-mode-fixed.spvasm", .{name}));
+                    spirv_execution_mode_cmd.addArg("DepthReplacing");
+                    // TODO: ALLOW COMPUTE SHADERS!!!
+
+                    // Reassemble updated assembly.
+                    const spirv_as = try b.findProgram(&.{"spirv-as"}, &.{});
+                    const spirv_as_cmd = b.addSystemCommand(&.{spirv_as});
+                    spirv_as_cmd.addFileArg(execution_mode_changed_spirv);
+                    spirv_as_cmd.addArg("-o");
+                    fixed_spirv = spirv_as_cmd.addOutputFileArg(b.fmt("{s}-execution-mode-fixed.spv", .{name}));
+                }
+
+                // Optimize the SPIRV.
                 const spirv_opt_cmd = b.addSystemCommand(&.{ spirv_opt, "-O" });
-                spirv_opt_cmd.addFileArg(obj.getEmittedBin());
+                spirv_opt_cmd.addFileArg(fixed_spirv);
                 spirv_opt_cmd.addArg("-o");
-                shader_out = spirv_opt_cmd.addOutputFileArg(try std.fmt.allocPrint(b.allocator, "{s}-opt.spv", .{name}));
+                shader_out = spirv_opt_cmd.addOutputFileArg(b.fmt("{s}-opt.spv", .{name}));
             } else |err| switch (err) {
                 error.FileNotFound => std.debug.print("spirv-opt not found, shader output will be unoptimized!\n", .{}),
             }
@@ -72,7 +123,7 @@ fn buildExample(
     optimize: std.builtin.OptimizeMode,
 ) !*std.Build.Step.Compile {
     const exe_mod = b.createModule(.{
-        .root_source_file = b.path(try std.fmt.allocPrint(b.allocator, "src/{s}.zig", .{name})),
+        .root_source_file = b.path(b.fmt("src/{s}.zig", .{name})),
         .target = target,
         .optimize = optimize,
     });
