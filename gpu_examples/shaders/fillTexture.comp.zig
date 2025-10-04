@@ -1,9 +1,13 @@
-// Zig compute shaders not possible atm due to `std.gpu.executionMode` not working :<
-// Keeping this here for archival purposes atm.
-
 const std = @import("std");
 
-fn store2d(
+/// Store to a 2d RGBA8 texture.
+///
+/// ## Function Parameters
+/// * `set`: The descriptor set.
+/// * `bind`: The binding slot.
+/// * `uv`: The UV to store to.
+/// * `pixel`: The pixel data to store.
+fn store2dRgba8(
     comptime set: u32,
     comptime bind: u32,
     uv: @Vector(2, u32),
@@ -28,7 +32,7 @@ fn store2d(
 }
 
 export fn main() callconv(.spirv_kernel) void {
-    // std.gpu.executionMode(main, .{ .local_size = .{ .x = 8, .y = 8, .z = 1 } });
+    // std.gpu.executionMode(main, .{ .local_size = .{ .x = 8, .y = 8, .z = 1 } }); // Set in build system by `spriv_execution_mode`.
 
-    store2d(1, 0, .{ std.gpu.global_invocation_id[0], std.gpu.global_invocation_id[1] }, .{ 1, 1, 0, 1 });
+    store2dRgba8(1, 0, .{ std.gpu.global_invocation_id[0], std.gpu.global_invocation_id[1] }, .{ 1, 1, 0, 1 });
 }

@@ -4,6 +4,12 @@ const depth_overrides = [_][]const u8{
     "solidColorDepth.frag",
 };
 
+const compute_sizes = std.StaticStringMap([3][]const u8).initComptime(.{
+    .{ "fillTexture.comp", .{ "8", "8", "1" } },
+    .{ "gradientTexture.comp", .{ "8", "8", "1" } },
+    .{ "texturedQuad.comp", .{ "8", "8", "1" } },
+});
+
 const ShaderFormat = enum {
     glsl,
     hlsl,
@@ -19,7 +25,14 @@ fn setupShader(
 ) !void {
     // Compute shaders not possible for zig atm. See `shaders/basic-compute.zig` for more info.
     const suffix = name[std.mem.lastIndexOf(u8, name, ".").? + 1 ..];
-    const actual_format = if (format == .zig and std.mem.eql(u8, suffix, "comp")) .hlsl else format;
+    const b_dis_opt: ?[]const u8 = b.findProgram(&.{"spirv-dis"}, &.{}) catch null;
+    const b_as_opt: ?[]const u8 = b.findProgram(&.{"spirv-as"}, &.{}) catch null;
+    const supports_zig_comp = b_dis_opt != null and b_as_opt != null;
+    const want_zig_compute = format == .zig and std.mem.eql(u8, suffix, "comp");
+    if (want_zig_compute and !supports_zig_comp)
+        std.debug.print("spirv-dis and spirv-as not found, zig compute kernel support disabled, using HLSL instead for compute kernels", .{});
+
+    const actual_format = if (!supports_zig_comp and want_zig_compute) .hlsl else format;
     switch (actual_format) {
         .glsl, .hlsl => {
             const glslang = b.findProgram(&.{"glslang"}, &.{}) catch @panic("glslang not found, can not compile GLSL shaders");
@@ -68,7 +81,7 @@ fn setupShader(
                         break;
                     }
                 }
-                if (depth_override) {
+                if (supports_zig_comp or depth_override) {
 
                     // Disassemble into SPIRV assembly.
                     const spirv_dis = try b.findProgram(&.{"spirv-dis"}, &.{});
@@ -88,8 +101,12 @@ fn setupShader(
                     const spirv_execution_mode_cmd = b.addRunArtifact(spirv_execution_mode);
                     spirv_execution_mode_cmd.addFileArg(spirv_dis_out);
                     const execution_mode_changed_spirv = spirv_execution_mode_cmd.addOutputFileArg(b.fmt("{s}-execution-mode-fixed.spvasm", .{name}));
-                    spirv_execution_mode_cmd.addArg("DepthReplacing");
-                    // TODO: ALLOW COMPUTE SHADERS!!!
+                    if (depth_override)
+                        spirv_execution_mode_cmd.addArg("DepthReplacing");
+                    if (want_zig_compute) {
+                        spirv_execution_mode_cmd.addArg("LocalSize");
+                        spirv_execution_mode_cmd.addArgs(&compute_sizes.get(name).?);
+                    }
 
                     // Reassemble updated assembly.
                     const spirv_as = try b.findProgram(&.{"spirv-as"}, &.{});

@@ -40,9 +40,19 @@ fn sampler2d(
     );
 }
 
-fn textureSize(
+/// Get the texture size of a 2d sampler.
+///
+/// ## Function Parameters
+/// * `set`: The descriptor set.
+/// * `bind`: The binding slot.
+/// * `lod`: The LOD to sample at.
+///
+/// ## Return Value
+/// Returns the sampler texture size.
+fn samplerSize2d(
     comptime set: u32,
     comptime bind: u32,
+    lod: i32,
 ) @Vector(2, i32) {
     return asm volatile (
         \\                  OpCapability ImageQuery
@@ -57,16 +67,16 @@ fn textureSize(
         \\                  OpDecorate %tex Binding $bind
         \\%loaded_sampler = OpLoad %sampler_type %tex
         \\%loaded_image   = OpImage %img_type %loaded_sampler
-        \\%zero           = OpConstant %int 0
-        \\%ret            = OpImageQuerySizeLod %v2int %loaded_image %zero
+        \\%ret            = OpImageQuerySizeLod %v2int %loaded_image %lod
         : [ret] "" (-> @Vector(2, i32)),
         : [set] "c" (set),
           [bind] "c" (bind),
+          [lod] "" (lod),
     );
 }
 
 inline fn getDifference(depth: f32, tex_coord: @Vector(2, f32), distance: f32) f32 {
-    const dimi = textureSize(tex_set, depth_tex);
+    const dimi = samplerSize2d(tex_set, depth_tex, 0);
     const dim: @Vector(2, f32) = .{ @floatFromInt(dimi[0]), @floatFromInt(dimi[1]) };
     return @max(
         sampler2d(tex_set, depth_tex, tex_coord + @Vector(2, f32){ 1.0 / dim[0], 0 } * @as(@Vector(2, f32), @splat(distance)))[0] - depth,

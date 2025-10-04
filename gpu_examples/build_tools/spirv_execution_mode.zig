@@ -85,7 +85,11 @@ pub fn main() !void {
             try writer.writeAll(entry_point_var);
             try writer.writeAll(" DepthReplacing\n");
         }
-        // TODO: LOCAL SIZE SUPPORT!
+        if (local_size) |sz| {
+            try writer.writeAll("               OpExecutionMode ");
+            try writer.writeAll(entry_point_var);
+            try writer.print(" LocalSize {d} {d} {d}\n", .{ sz.x, sz.y, sz.z });
+        }
     }
     try writer.flush();
 }
