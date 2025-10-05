@@ -7,6 +7,7 @@ const depth_overrides = [_][]const u8{
 const compute_sizes = std.StaticStringMap([3][]const u8).initComptime(.{
     .{ "fillTexture.comp", .{ "8", "8", "1" } },
     .{ "gradientTexture.comp", .{ "8", "8", "1" } },
+    .{ "spriteBatch.comp", .{ "64", "1", "1" } },
     .{ "texturedQuad.comp", .{ "8", "8", "1" } },
 });
 
