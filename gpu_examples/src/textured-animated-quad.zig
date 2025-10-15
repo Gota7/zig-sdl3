@@ -60,50 +60,45 @@ const AppState = struct {
     sampler: sdl3.gpu.Sampler,
 };
 
-const Mat4 = packed struct {
-    c0: @Vector(4, f32),
-    c1: @Vector(4, f32),
-    c2: @Vector(4, f32),
-    c3: @Vector(4, f32),
+const Mat4 = struct {
+    c: [4]@Vector(4, f32),
+
+    fn mulVec(a: Mat4, b: @Vector(4, f32)) @Vector(4, f32) {
+        const Vec = @Vector(4, f32);
+        var sum: Vec = @splat(0);
+        inline for (0..4) |i| {
+            sum += a.c[i] * @as(Vec, @splat(b[i]));
+        }
+        return sum;
+    }
 
     pub fn mul(a: Mat4, b: Mat4) Mat4 {
-        const ar0 = a.row(0);
-        const ar1 = a.row(1);
-        const ar2 = a.row(2);
-        const ar3 = a.row(3);
-        return .{
-            .c0 = .{ @reduce(.Add, ar0 * b.c0), @reduce(.Add, ar1 * b.c0), @reduce(.Add, ar2 * b.c0), @reduce(.Add, ar3 * b.c0) },
-            .c1 = .{ @reduce(.Add, ar0 * b.c1), @reduce(.Add, ar1 * b.c1), @reduce(.Add, ar2 * b.c1), @reduce(.Add, ar3 * b.c1) },
-            .c2 = .{ @reduce(.Add, ar0 * b.c2), @reduce(.Add, ar1 * b.c2), @reduce(.Add, ar2 * b.c2), @reduce(.Add, ar3 * b.c2) },
-            .c3 = .{ @reduce(.Add, ar0 * b.c3), @reduce(.Add, ar1 * b.c3), @reduce(.Add, ar2 * b.c3), @reduce(.Add, ar3 * b.c3) },
-        };
+        var res: Mat4 = undefined;
+        inline for (0..4) |i| {
+            res.c[i] = a.mulVec(b.c[i]);
+        }
+        return res;
     }
 
     pub fn rotationZ(radians: f32) Mat4 {
         return .{
-            .c0 = .{ @cos(radians), @sin(radians), 0, 0 },
-            .c1 = .{ -@sin(radians), @cos(radians), 0, 0 },
-            .c2 = .{ 0, 0, 1, 0 },
-            .c3 = .{ 0, 0, 0, 1 },
-        };
-    }
-
-    pub fn row(mat: Mat4, ind: comptime_int) @Vector(4, f32) {
-        return switch (ind) {
-            0 => .{ mat.c0[0], mat.c1[0], mat.c2[0], mat.c3[0] },
-            1 => .{ mat.c0[1], mat.c1[1], mat.c2[1], mat.c3[1] },
-            2 => .{ mat.c0[2], mat.c1[2], mat.c2[2], mat.c3[2] },
-            3 => .{ mat.c0[3], mat.c1[3], mat.c2[3], mat.c3[3] },
-            else => @compileError("Invalid row number"),
+            .c = .{
+                .{ @cos(radians), @sin(radians), 0, 0 },
+                .{ -@sin(radians), @cos(radians), 0, 0 },
+                .{ 0, 0, 1, 0 },
+                .{ 0, 0, 0, 1 },
+            },
         };
     }
 
     pub fn translation(amount: @Vector(3, f32)) Mat4 {
         return .{
-            .c0 = .{ 1, 0, 0, 0 },
-            .c1 = .{ 0, 1, 0, 0 },
-            .c2 = .{ 0, 0, 1, 0 },
-            .c3 = .{ amount[0], amount[1], amount[2], 1 },
+            .c = .{
+                .{ 1, 0, 0, 0 },
+                .{ 0, 1, 0, 0 },
+                .{ 0, 0, 1, 0 },
+                .{ amount[0], amount[1], amount[2], 1 },
+            },
         };
     }
 };
