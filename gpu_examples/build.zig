@@ -164,6 +164,8 @@ fn buildExample(
             };
             if (!std.mem.endsWith(u8, file.basename, extension))
                 continue;
+            if (std.mem.eql(u8, file.basename, "common.zig")) // Special exception.
+                continue;
             try setupShader(b, exe.root_module, file.basename[0..(file.basename.len - extension.len)], format);
         }
     }
