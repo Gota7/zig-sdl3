@@ -218,7 +218,14 @@ pub fn setupSdlImage(b: *std.Build, sdl3: *std.Build.Module, translate_c: *std.B
 }
 
 // Most of this is copied from https://github.com/Beyley/SDL_shadercross_zig/blob/master/build.zig.
-pub fn setupSdlShadercross(b: *std.Build, sdl3: *std.Build.Module, translate_c: *std.Build.Step.TranslateC, sdl_dep_lib: *std.Build.Step.Compile, linkage: std.builtin.LinkMode, cfg: Config) void {
+pub fn setupSdlShadercross(
+    b: *std.Build,
+    sdl3: *std.Build.Module,
+    translate_c: *std.Build.Step.TranslateC,
+    sdl_dep_lib: *std.Build.Step.Compile,
+    linkage: std.builtin.LinkMode,
+    cfg: Config,
+) void {
     const upstream = b.lazyDependency("sdl_shadercross", .{}) orelse return;
 
     const target = cfg.target;
