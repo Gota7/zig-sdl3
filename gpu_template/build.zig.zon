@@ -1,0 +1,15 @@
+.{
+    .name = .sdl3_template,
+    .version = "0.0.0",
+    .dependencies = .{
+        .sdl3 = .{
+            .path = "../",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+    .fingerprint = 0xa5bd7236fc5f4b29,
+}
