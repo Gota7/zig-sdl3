@@ -87,6 +87,7 @@ pub fn build(b: *std.Build) !void {
     const sdl_dep_lib = sdl_dep.artifact("SDL3");
     if (sdl_system_include_path) |val|
         sdl_dep_lib.addSystemIncludePath(val);
+    b.installArtifact(sdl_dep_lib);
 
     // SDL options.
     const options = b.addOptions();
