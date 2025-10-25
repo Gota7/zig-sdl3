@@ -28,7 +28,7 @@ fn importShader(shader: anytype) Shader {
     };
 }
 const vert_shader = importShader(@import("positionColor.vert.zig"));
-const frag_shader = importShader(@import("SolidColor.frag.zig"));
+const frag_shader = importShader(@import("solidColor.frag.zig"));
 
 const window_width = 640;
 const window_height = 480;
