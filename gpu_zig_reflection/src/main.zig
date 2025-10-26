@@ -18,6 +18,8 @@ fn getAllocator() std.mem.Allocator {
     return if (builtin.mode == .Debug) debug_allocator.allocator() else std.heap.smp_allocator;
 }
 
+const init_flags = sdl3.InitFlags{ .video = true };
+
 const vert_shader_source = @embedFile("texturedQuad.vert");
 const vert_shader_name = "Textured Quad";
 const frag_shader_source = @embedFile("texturedQuad.frag");
@@ -85,7 +87,8 @@ pub fn init(
     // SDL3 setup.
     const allocator = getAllocator();
     _ = try sdl3.setMemoryFunctionsByAllocator(allocator);
-    try sdl3.init(.{ .video = true });
+    try sdl3.init(init_flags);
+    errdefer sdl3.quit(init_flags);
     sdl3.errors.error_callback = &sdl3.extras.sdlErrZigLog;
     sdl3.log.setLogOutputFunction(void, &sdl3.extras.sdlLogZigLog, null);
 
@@ -282,8 +285,8 @@ pub fn iterate(
 
     // Get command buffer and swapchain texture.
     const cmd_buf = try app_state.device.acquireCommandBuffer();
-    const swapchain_texture = try cmd_buf.waitAndAcquireSwapchainTexture(app_state.window);
-    if (swapchain_texture.texture) |texture| {
+    const swapchain_texture, _, _ = try cmd_buf.waitAndAcquireSwapchainTexture(app_state.window);
+    if (swapchain_texture) |texture| {
 
         // Start a render pass if the swapchain texture is available. Make sure to clear it.
         const render_pass = cmd_buf.beginRenderPass(&.{
@@ -350,4 +353,8 @@ pub fn quit(
         val.device.deinit();
         allocator.destroy(val);
     }
+    sdl3.quit(init_flags);
+    sdl3.shutdown();
+    if (builtin.mode == .Debug)
+        _ = debug_allocator.detectLeaks();
 }
