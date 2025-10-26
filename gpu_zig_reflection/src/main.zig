@@ -1,3 +1,4 @@
+const builtin = @import("builtin");
 const options = @import("options");
 const sdl3 = @import("sdl3");
 const std = @import("std");
@@ -10,13 +11,24 @@ comptime {
 pub const _start = void;
 pub const WinMainCRTStartup = void;
 
-/// Allocator we will use.
-const allocator = std.heap.smp_allocator;
+// Allocator setup.
+var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
+
+fn getAllocator() std.mem.Allocator {
+    return if (builtin.mode == .Debug) debug_allocator.allocator() else std.heap.smp_allocator;
+}
 
 const vert_shader_source = @embedFile("texturedQuad.vert");
 const vert_shader_name = "Textured Quad";
 const frag_shader_source = @embedFile("texturedQuad.frag");
 const frag_shader_name = "Textured Quad";
+
+const shader_format = switch (options.shader_format) {
+    .dxbc => sdl3.gpu.ShaderFormatFlags{ .dxbc = true },
+    .dxil => sdl3.gpu.ShaderFormatFlags{ .dxil = true },
+    .msl => sdl3.gpu.ShaderFormatFlags{ .msl = true },
+    .spirv => sdl3.gpu.ShaderFormatFlags{ .spirv = true },
+};
 
 const ravioli_bmp = @embedFile("images/ravioli.bmp");
 
@@ -46,15 +58,6 @@ const indices = [_]u16{
 };
 const indices_bytes = std.mem.asBytes(&indices);
 
-const sampler_names = [_][]const u8{
-    "PointClamp",
-    "PointWrap",
-    "LinearClamp",
-    "LinearWrap",
-    "AnisotropicClamp",
-    "AnisotropicWrap",
-};
-
 const AppState = struct {
     device: sdl3.gpu.Device,
     window: sdl3.video.Window,
@@ -62,34 +65,8 @@ const AppState = struct {
     vertex_buffer: sdl3.gpu.Buffer,
     index_buffer: sdl3.gpu.Buffer,
     texture: sdl3.gpu.Texture,
-    samplers: [sampler_names.len]sdl3.gpu.Sampler,
-    curr_sampler: usize = 0,
+    sampler: sdl3.gpu.Sampler,
 };
-
-fn loadGraphicsShader(
-    device: sdl3.gpu.Device,
-    name: ?[:0]const u8,
-    shader_code: [:0]const u8,
-    stage: sdl3.shadercross.ShaderStage,
-) !sdl3.gpu.Shader {
-    const spirv_code = if (options.spirv) shader_code else try sdl3.shadercross.compileSpirvFromHlsl(.{
-        .defines = null,
-        .enable_debug = options.gpu_debug,
-        .entry_point = "main",
-        .include_dir = null,
-        .name = name,
-        .shader_stage = stage,
-        .source = shader_code,
-    });
-    const spirv_metadata = try sdl3.shadercross.reflectGraphicsSpirv(spirv_code);
-    return try sdl3.shadercross.compileGraphicsShaderFromSpirv(device, .{
-        .bytecode = spirv_code,
-        .enable_debug = options.gpu_debug,
-        .entry_point = "main",
-        .name = name,
-        .shader_stage = stage,
-    }, spirv_metadata);
-}
 
 pub fn loadImage(
     bmp: []const u8,
@@ -106,13 +83,14 @@ pub fn init(
     _ = args;
 
     // SDL3 setup.
+    const allocator = getAllocator();
+    _ = try sdl3.setMemoryFunctionsByAllocator(allocator);
     try sdl3.init(.{ .video = true });
     sdl3.errors.error_callback = &sdl3.extras.sdlErrZigLog;
     sdl3.log.setLogOutputFunction(void, &sdl3.extras.sdlLogZigLog, null);
 
-    // Get our GPU device that supports SPIR-V.
-    const shader_formats = sdl3.shadercross.getSpirvShaderFormats() orelse @panic("No formats available");
-    const device = try sdl3.gpu.Device.init(shader_formats, options.gpu_debug, null);
+    // Get our GPU device that supports what we support.
+    const device = try sdl3.gpu.Device.init(shader_format, options.gpu_debug, null);
     errdefer device.deinit();
 
     // Make our demo window.
@@ -121,9 +99,22 @@ pub fn init(
     try device.claimWindow(window);
 
     // Prepare pipelines.
-    const vertex_shader = try loadGraphicsShader(device, vert_shader_name, vert_shader_source, .vertex);
+    const vertex_shader = try device.createShader(.{
+        .code = vert_shader_source,
+        .entry_point = "main",
+        .format = shader_format,
+        .stage = .vertex,
+        .props = .{ .name = vert_shader_name },
+    });
     defer device.releaseShader(vertex_shader);
-    const fragment_shader = try loadGraphicsShader(device, frag_shader_name, frag_shader_source, .fragment);
+    const fragment_shader = try device.createShader(.{
+        .code = frag_shader_source,
+        .entry_point = "main",
+        .format = shader_format,
+        .stage = .fragment,
+        .props = .{ .name = frag_shader_name },
+        .num_samplers = 1,
+    });
     defer device.releaseShader(fragment_shader);
     const pipeline_create_info = sdl3.gpu.GraphicsPipelineCreateInfo{
         .target_info = .{
@@ -162,18 +153,8 @@ pub fn init(
     const pipeline = try device.createGraphicsPipeline(pipeline_create_info);
     errdefer device.releaseGraphicsPipeline(pipeline);
 
-    // Create samplers.
-    var samplers: [sampler_names.len]sdl3.gpu.Sampler = undefined;
-    samplers[0] = try device.createSampler(.{
-        .min_filter = .nearest,
-        .mag_filter = .nearest,
-        .mipmap_mode = .nearest,
-        .address_mode_u = .clamp_to_edge,
-        .address_mode_v = .clamp_to_edge,
-        .address_mode_w = .clamp_to_edge,
-    });
-    errdefer device.releaseSampler(samplers[0]);
-    samplers[1] = try device.createSampler(.{
+    // Create sampler.
+    const sampler = try device.createSampler(.{
         .min_filter = .nearest,
         .mag_filter = .nearest,
         .mipmap_mode = .nearest,
@@ -181,45 +162,7 @@ pub fn init(
         .address_mode_v = .repeat,
         .address_mode_w = .repeat,
     });
-    errdefer device.releaseSampler(samplers[1]);
-    samplers[2] = try device.createSampler(.{
-        .min_filter = .linear,
-        .mag_filter = .linear,
-        .mipmap_mode = .linear,
-        .address_mode_u = .clamp_to_edge,
-        .address_mode_v = .clamp_to_edge,
-        .address_mode_w = .clamp_to_edge,
-    });
-    errdefer device.releaseSampler(samplers[2]);
-    samplers[3] = try device.createSampler(.{
-        .min_filter = .linear,
-        .mag_filter = .linear,
-        .mipmap_mode = .linear,
-        .address_mode_u = .repeat,
-        .address_mode_v = .repeat,
-        .address_mode_w = .repeat,
-    });
-    errdefer device.releaseSampler(samplers[3]);
-    samplers[4] = try device.createSampler(.{
-        .min_filter = .linear,
-        .mag_filter = .linear,
-        .mipmap_mode = .linear,
-        .address_mode_u = .clamp_to_edge,
-        .address_mode_v = .clamp_to_edge,
-        .address_mode_w = .clamp_to_edge,
-        .max_anisotropy = 4,
-    });
-    errdefer device.releaseSampler(samplers[4]);
-    samplers[5] = try device.createSampler(.{
-        .min_filter = .linear,
-        .mag_filter = .linear,
-        .mipmap_mode = .linear,
-        .address_mode_u = .repeat,
-        .address_mode_v = .repeat,
-        .address_mode_w = .repeat,
-        .max_anisotropy = 4,
-    });
-    errdefer device.releaseSampler(samplers[5]);
+    errdefer device.releaseSampler(sampler);
 
     // Prepare vertex buffer.
     const vertex_buffer = try device.createBuffer(.{
@@ -325,12 +268,10 @@ pub fn init(
         .vertex_buffer = vertex_buffer,
         .index_buffer = index_buffer,
         .texture = texture,
-        .samplers = samplers,
+        .sampler = sampler,
     };
 
     // Finish setup.
-    try sdl3.log.log("Press left/right to switch between sampler states", .{});
-    try sdl3.log.log("Sampler state: {s}", .{sampler_names[state.curr_sampler]});
     app_state.* = state;
     return .run;
 }
@@ -367,7 +308,7 @@ pub fn iterate(
         render_pass.bindFragmentSamplers(
             0,
             &.{
-                .{ .texture = app_state.texture, .sampler = app_state.samplers[app_state.curr_sampler] },
+                .{ .texture = app_state.texture, .sampler = app_state.sampler },
             },
         );
         render_pass.drawIndexedPrimitives(6, 1, 0, 0, 0);
@@ -383,30 +324,8 @@ pub fn event(
     app_state: *AppState,
     curr_event: sdl3.events.Event,
 ) !sdl3.AppResult {
+    _ = app_state;
     switch (curr_event) {
-        .key_down => |key| {
-            if (!key.repeat) {
-                var changed = false;
-                if (key.key) |val| switch (val) {
-                    .left => {
-                        if (app_state.curr_sampler == 0) {
-                            app_state.curr_sampler = sampler_names.len - 1;
-                        } else app_state.curr_sampler -= 1;
-                        changed = true;
-                    },
-                    .right => {
-                        if (app_state.curr_sampler >= sampler_names.len - 1) {
-                            app_state.curr_sampler = 0;
-                        } else app_state.curr_sampler += 1;
-                        changed = true;
-                    },
-                    else => {},
-                };
-                if (changed) {
-                    try sdl3.log.log("Sampler state: {s}", .{sampler_names[app_state.curr_sampler]});
-                }
-            }
-        },
         .terminating => return .success,
         .quit => return .success,
         else => {},
@@ -419,9 +338,9 @@ pub fn quit(
     result: sdl3.AppResult,
 ) void {
     _ = result;
+    const allocator = getAllocator();
     if (app_state) |val| {
-        for (val.samplers) |sampler|
-            val.device.releaseSampler(sampler);
+        val.device.releaseSampler(val.sampler);
         val.device.releaseTexture(val.texture);
         val.device.releaseBuffer(val.index_buffer);
         val.device.releaseBuffer(val.vertex_buffer);

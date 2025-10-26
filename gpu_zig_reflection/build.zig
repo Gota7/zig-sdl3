@@ -11,7 +11,6 @@ const OutputFormat = enum {
     dxil,
     msl,
     spirv,
-    hlsl,
 };
 
 fn shadercross(b: *std.Build, sdl3: *std.Build.Dependency) *std.Build.Step.Compile {
@@ -27,18 +26,6 @@ fn shadercross(b: *std.Build, sdl3: *std.Build.Dependency) *std.Build.Step.Compi
     const upstream = sdl3.builder.dependency("sdl_shadercross", .{ .target = b.graph.host });
     exe.root_module.addIncludePath(upstream.path("include"));
     exe.root_module.addIncludePath(upstream.path("src"));
-
-    if (b.lazyDependency("mach_dxcompiler", .{
-        .target = b.graph.target,
-        .spirv = true,
-        .skip_executables = true,
-        .skip_tests = true,
-        .from_source = true,
-        .shared = false,
-    })) |dxcompiler| {
-        exe.linkLibrary(dxcompiler.artifact("machdxcompiler"));
-        exe.defineCMacro("SDL_SHADERCROSS_DXC", "1");
-    }
 
     exe.root_module.addCSourceFiles(.{
         .root = upstream.path("src"),
@@ -76,22 +63,59 @@ fn setupShader(
     debug: bool,
     output_format: OutputFormat,
 ) !void {
-    const name_ext = name[std.mem.indexOf(u8, name, ".").?..];
-    const format: ShaderFormat = if (std.mem.eql(u8, name_ext, ".vert"))
-        .vertex
-    else if (std.mem.eql(u8, name_ext, ".frag"))
-        .fragment
-    else
-        .compute;
-    const run_shadercross = b.addRunArtifact(shadercross_exe);
-    const upper = try std.ascii.allocUpperString(b.allocator, @tagName(output_format));
-    run_shadercross.addFileArg(b.path(b.fmt("{s}/{s}.hlsl", .{ "shaders", name })));
-    run_shadercross.addArgs(&.{ "--source", "HLSL", "--entrypoint", "main", "--stage", @tagName(format), "--dest", upper });
-    if (debug)
-        run_shadercross.addArg("--debug");
-    run_shadercross.addArg("--output");
-    const output = run_shadercross.addOutputFileArg(b.fmt("{s}.{s}", .{ name, @tagName(output_format) }));
-    module.addAnonymousImport(name, .{ .root_source_file = output });
+    const obj = b.addObject(.{
+        .name = name,
+        .root_module = b.addModule(name, .{
+            .root_source_file = b.path(b.fmt("shaders/{s}.zig", .{name})),
+            .target = b.resolveTargetQuery(.{
+                .cpu_arch = .spirv64,
+                .cpu_model = .{ .explicit = &std.Target.spirv.cpu.vulkan_v1_2 },
+                .cpu_features_add = std.Target.spirv.featureSet(&.{}),
+                .os_tag = .vulkan,
+                .ofmt = .spirv,
+            }),
+        }),
+        .use_llvm = false,
+        .use_lld = false,
+    });
+    var shader_out = obj.getEmittedBin();
+
+    // Optimize SPIR-V if possible.
+    if (b.findProgram(&.{"spirv-opt"}, &.{})) |spirv_opt| {
+
+        // Remove duplicate type definitions that might be done by inline assembly.
+        const spirv_fix = b.addSystemCommand(&.{ spirv_opt, "--remove-duplicates", "--skip-validation" });
+        spirv_fix.addFileArg(obj.getEmittedBin());
+        spirv_fix.addArg("-o");
+        const fixed_spirv = spirv_fix.addOutputFileArg(b.fmt("{s}-fixed.spv", .{name}));
+
+        // Optimize the SPIRV.
+        const spirv_opt_cmd = b.addSystemCommand(&.{ spirv_opt, "-O" });
+        spirv_opt_cmd.addFileArg(fixed_spirv);
+        spirv_opt_cmd.addArg("-o");
+        shader_out = spirv_opt_cmd.addOutputFileArg(b.fmt("{s}-opt.spv", .{name}));
+    } else |err| switch (err) {
+        error.FileNotFound => std.debug.print("spirv-opt not found, shader output will be unoptimized!\n", .{}),
+    }
+
+    if (output_format != .spirv) {
+        const name_ext = name[std.mem.indexOf(u8, name, ".").?..];
+        const format: ShaderFormat = if (std.mem.eql(u8, name_ext, ".vert"))
+            .vertex
+        else if (std.mem.eql(u8, name_ext, ".frag"))
+            .fragment
+        else
+            .compute;
+        const run_shadercross = b.addRunArtifact(shadercross_exe);
+        const upper = try std.ascii.allocUpperString(b.allocator, @tagName(output_format));
+        run_shadercross.addFileArg(shader_out);
+        run_shadercross.addArgs(&.{ "--source", "SPIRV", "--entrypoint", "main", "--stage", @tagName(format), "--dest", upper });
+        if (debug)
+            run_shadercross.addArg("--debug");
+        run_shadercross.addArg("--output");
+        shader_out = run_shadercross.addOutputFileArg(b.fmt("{s}.{s}", .{ name, @tagName(output_format) }));
+    }
+    module.addAnonymousImport(name, .{ .root_source_file = shader_out });
 }
 
 fn buildShaders(
@@ -103,17 +127,16 @@ fn buildShaders(
 ) !void {
     var dir = (try std.fs.openDirAbsolute(b.path("shaders").getPath(b), .{ .iterate = true }));
     defer dir.close();
-    var dir_iterator = try dir.walk(b.allocator);
-    defer dir_iterator.deinit();
+    var dir_iterator = dir.iterate();
     while (try dir_iterator.next()) |file| {
         if (file.kind == .file) {
-            const extension = ".hlsl";
-            if (!std.mem.endsWith(u8, file.basename, extension))
+            const extension = ".zig";
+            if (!std.mem.endsWith(u8, file.name, extension))
                 continue;
             try setupShader(
                 b,
                 exe.root_module,
-                file.basename[0..(file.basename.len - extension.len)],
+                file.name[0..(file.name.len - extension.len)],
                 shadercross_exe,
                 debug,
                 output_format,
