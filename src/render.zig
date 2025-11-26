@@ -1301,7 +1301,7 @@ pub const Renderer = struct {
     ) !void {
         var fallback = std.heap.stackFallback(options.renderer_debug_text_stack_size, sdl3.allocator);
         const allocator = fallback.get();
-        const msg = try std.fmt.allocPrintZ(allocator, fmt, args);
+        const msg = try std.fmt.allocPrintSentinel(allocator, fmt, args, 0);
         defer allocator.free(msg);
         const ret = c.SDL_RenderDebugText(
             self.value,
