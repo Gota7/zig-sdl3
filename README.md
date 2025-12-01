@@ -1,6 +1,9 @@
 zig-sdl3
 ========
 
+# ARCHIVED!
+Moved to codeberg under my indie game studio: https://codeberg.org/7Games/zig-sdl3
+
 A lightweight wrapper to zig-ify SDL3.
 
 > [!WARNING]
