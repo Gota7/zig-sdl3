@@ -1,0 +1,15 @@
+.{
+    .name = .gpu_zig_reflection,
+    .version = "0.0.0",
+    .dependencies = .{
+        .sdl3 = .{
+            .path = "../",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+    .fingerprint = 0xaf93ee63e171683e,
+}

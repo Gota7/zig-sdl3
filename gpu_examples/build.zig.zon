@@ -1,0 +1,16 @@
+.{
+    .name = .gpu_examples,
+    .version = "0.0.1",
+    .minimum_zig_version = "0.15.1",
+    .dependencies = .{
+        .sdl3 = .{
+            .path = "../",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+    .fingerprint = 0x7a44a34cd5e71f29,
+}

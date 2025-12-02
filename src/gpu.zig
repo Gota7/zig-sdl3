@@ -110,13 +110,13 @@ pub const BlitInfo = struct {
     load_op: LoadOperation,
     /// The color to clear the destination region to before the blit.
     /// Ignored if `load_op` is not `gpu.LoadOperation.clear`.
-    clear_color: pixels.FColor,
+    clear_color: pixels.FColor = .{},
     /// The flip mode for the source region.
-    flip_mode: surface.FlipMode,
+    flip_mode: surface.FlipMode = .{},
     /// The filter mode used when blitting.
     filter: Filter,
     /// True cycles the destination texture if it is already bound.
-    cycle: bool,
+    cycle: bool = false,
 
     /// Convert from SDL.
     pub fn fromSdl(value: c.SDL_GPUBlitInfo) BlitInfo {
@@ -153,10 +153,10 @@ pub const BlitRegion = struct {
     /// The texture.
     texture: Texture,
     /// The mip level index of the region.
-    mip_level: u32,
+    mip_level: u32 = 0,
     /// The layer index or depth plane of the region.
     /// This value is treated as a layer index on 2D array and cube textures, and as a depth plane on 3D textures.
-    layer_or_depth_plane: u32,
+    layer_or_depth_plane: u32 = 0,
     /// The region.
     region: rect.Rect(u32),
 
@@ -3048,11 +3048,11 @@ pub const IndexedIndirectDrawCommand = extern struct {
     /// The number of instances to draw.
     num_instances: u32,
     /// The base index within the index buffer.
-    first_index: u32,
+    first_index: u32 = 0,
     /// The value added to the vertex index before indexing into the vertex buffer.
-    vertex_offset: i32,
+    vertex_offset: i32 = 0,
     /// The ID of the first instance to draw.
-    first_instance: u32,
+    first_instance: u32 = 0,
 
     // Size tests.
     comptime {
@@ -3109,9 +3109,9 @@ pub const IndirectDrawCommand = extern struct {
     /// The number of instances to draw.
     num_instances: u32,
     /// The index of the first vertex to draw.
-    first_vertex: u32,
+    first_vertex: u32 = 0,
     /// The ID of the first instance to draw.
-    first_instance: u32,
+    first_instance: u32 = 0,
 
     // Size tests.
     comptime {
@@ -4150,7 +4150,7 @@ pub const StorageBufferReadWriteBinding = extern struct {
     /// Must have been created with `gpu.BufferUsageFlags.compute_storage_write`.
     buffer: Buffer,
     /// If true, cycles the buffer if it is already bound.
-    cycle: bool,
+    cycle: bool = false,
     _1: u8 = 0,
     _2: u8 = 0,
     _3: u8 = 0,
@@ -4173,11 +4173,11 @@ pub const StorageTextureReadWriteBinding = extern struct {
     /// The texture to bind. Must have been created with `gpu.TextureUsageFlags.compute_storage_write` or `gpu.TextureUsageFlags.compute_storage_simultaneous_read_write`.
     texture: Texture,
     /// The mip level index to bind.
-    mip_level: u32,
+    mip_level: u32 = 0,
     /// The layer index to bind.
-    layer: u32,
+    layer: u32 = 0,
     /// If true, cycles the buffer if it is already bound.
-    cycle: bool,
+    cycle: bool = false,
     _1: u8 = 0,
     _2: u8 = 0,
     _3: u8 = 0,
@@ -4243,6 +4243,9 @@ pub const SwapchainComposition = enum(c.SDL_GPUSwapchainComposition) {
 /// This struct is available since SDL 3.2.0.
 pub const Texture = packed struct {
     value: ?*c.SDL_GPUTexture,
+
+    /// A null texture.
+    pub const @"null" = Texture{ .value = null };
 
     // Size tests.
     comptime {
